@@ -107,13 +107,19 @@ app.get("/vehicles", (req, res) => {
 // =======================
 // ⏱ START
 // =======================
-app.listen(PORT, async () => {
-    console.log("Server running on 3000")
+const PORT = process.env.PORT || 3000;
 
-    await loadStops()
-    await loadArrivals()
+app.listen(PORT, () => {
+    console.log("Server running on port " + PORT);
+});
 
-    connectWS()
+// 🔥 стартиране на логиката
+async function startServer() {
+    await loadStops();
+    await loadArrivals();
+    connectWS();
 
-    setInterval(loadArrivals, 10000) // 10 сек
-})
+    setInterval(loadArrivals, 60000); // 60 сек
+}
+
+startServer();
