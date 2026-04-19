@@ -2,84 +2,154 @@ const express = require("express")
 const WebSocket = require("ws")
 
 const app = express()
+const PORT = process.env.PORT || 3000
 
 const API = "https://api.livetransport.eu/stara-zagora"
-const WS = "wss://api.livetransport.eu/stara-zagora"
+const WS_URL = "wss://api.livetransport.eu/stara-zagora"
 
 let stopsCache = []
 let arrivalsCache = {}
 let vehiclesCache = []
 
-// 🔥 FETCH FIX
-const fetch = (...args) =>
-    import('node-fetch').then(({default: fetch}) => fetch(...args))
+let ws = null
+let isWSConnected = false
 
 // =======================
-// 📍 СПИРКИ
+// FETCH FIX
+// =======================
+const fetch = (...args) =>
+    import("node-fetch").then(({ default: fetch }) => fetch(...args))
+
+// =======================
+// RATE LIMIT CONTROL
+// =======================
+const REQUESTS_PER_SECOND = 3
+const REQUEST_DELAY = 1000 / REQUESTS_PER_SECOND
+
+function delay(ms) {
+    return new Promise(res => setTimeout(res, ms))
+}
+
+// =======================
+// НОЩЕН РЕЖИМ
+// =======================
+function isServerActive() {
+    const hour = new Date().toLocaleString("en-US", {
+        timeZone: "Europe/Sofia",
+        hour: "numeric",
+        hour12: false
+    })
+
+    const h = parseInt(hour)
+    return !(h >= 0 && h < 5)
+}
+
+// =======================
+// СПИРКИ
 // =======================
 async function loadStops() {
     try {
         const res = await fetch(`${API}/data`)
         const data = await res.json()
         stopsCache = data.stops || []
-        console.log("Stops updated:", stopsCache.length)
+        console.log("Stops:", stopsCache.length)
     } catch (e) {
-        console.log("Stops error", e.message)
+        console.log("Stops error:", e.message)
     }
 }
 
 // =======================
-// 🚌 ПРИСТИГАНИЯ (BATCH)
+// ARRIVALS (SMART LOOP)
 // =======================
 let currentIndex = 0
-const BATCH_SIZE = 20
 
-async function loadArrivalsBatch() {
-    if (!stopsCache.length) return
+async function arrivalsLoop() {
+    while (true) {
 
-    const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
+        if (!isServerActive()) {
+            console.log("🌙 Night mode - arrivals paused")
+            await delay(5000)
+            continue
+        }
 
-    for (const stop of batch) {
+        if (!stopsCache.length) {
+            await delay(2000)
+            continue
+        }
+
+        const stop = stopsCache[currentIndex]
+
         try {
             const res = await fetch(`${API}/virtual-board/${stop.id}?limit=20`)
             const data = await res.json()
+
             arrivalsCache[stop.id] = data.departures || []
+
         } catch (e) {
-            console.log("Arrivals error:", stop.id)
+            console.log("Arrival error:", stop.id)
         }
+
+        currentIndex++
+        if (currentIndex >= stopsCache.length) {
+            currentIndex = 0
+        }
+
+        await delay(REQUEST_DELAY)
     }
-
-    currentIndex += BATCH_SIZE
-    if (currentIndex >= stopsCache.length) currentIndex = 0
-
-    console.log("Batch updated:", currentIndex)
 }
 
 // =======================
-// 📡 LIVE GPS
+// WEBSOCKET
 // =======================
 function connectWS() {
-    const ws = new WebSocket(WS)
+    if (!isServerActive()) return
+    if (isWSConnected) return
+
+    ws = new WebSocket(WS_URL)
 
     ws.on("open", () => {
+        isWSConnected = true
         console.log("WS connected")
     })
 
     ws.on("message", (msg) => {
         try {
             vehiclesCache = JSON.parse(msg)
-        } catch (e) {}
+        } catch {}
     })
 
     ws.on("close", () => {
+        isWSConnected = false
         console.log("WS reconnect...")
-        setTimeout(connectWS, 2000)
+        setTimeout(connectWS, 3000)
     })
 }
 
+function stopWS() {
+    if (ws && isWSConnected) {
+        ws.close()
+        ws = null
+        isWSConnected = false
+        console.log("WS stopped")
+    }
+}
+
 // =======================
-// 🌐 API
+// CACHE CLEAN
 // =======================
+function clearCache() {
+    arrivalsCache = {}
+    vehiclesCache = []
+    console.log("Cache cleared")
+}
+
+// =======================
+// API
+// =======================
+app.get("/", (req, res) => {
+    res.send("Backend running")
+})
+
 app.get("/stops", (req, res) => {
     res.json(stopsCache)
 })
@@ -93,24 +163,30 @@ app.get("/vehicles", (req, res) => {
 })
 
 // =======================
-// 🚀 START
+// START
 // =======================
-const PORT = process.env.PORT || 3000
-
 app.listen(PORT, () => {
     console.log("Server running on port " + PORT)
 })
 
-// стартиране
+// =======================
+// MAIN
+// =======================
 async function startServer() {
     await loadStops()
+
     connectWS()
 
-    // 🔥 въртим batch на всеки 3 сек (няма да надвишиш лимита)
-    setInterval(loadArrivalsBatch, 3000)
+    arrivalsLoop() // 🔥 continuous controlled loop
 
-    // обновяване на спирките на 5 мин
-    setInterval(loadStops, 300000)
+    setInterval(() => {
+        if (!isServerActive()) {
+            stopWS()
+            clearCache()
+        } else {
+            connectWS()
+        }
+    }, 60000)
 }
 
 startServer()
