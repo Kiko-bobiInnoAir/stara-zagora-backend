@@ -1,7 +1,7 @@
 const express = require("express")
+const WebSocket = require("ws")
 
 const app = express()
-const PORT = 3000
 
 const API = "https://api.livetransport.eu/stara-zagora"
 const WS = "wss://api.livetransport.eu/stara-zagora"
@@ -10,7 +10,7 @@ let stopsCache = []
 let arrivalsCache = {}
 let vehiclesCache = []
 
-// 🔥 FETCH FIX (Node)
+// 🔥 FETCH FIX
 const fetch = (...args) =>
     import('node-fetch').then(({default: fetch}) => fetch(...args))
 
@@ -21,25 +21,21 @@ async function loadStops() {
     try {
         const res = await fetch(`${API}/data`)
         const data = await res.json()
-        stopsCache = data.stops
-        console.log("Stops updated")
+        stopsCache = data.stops || []
+        console.log("Stops updated:", stopsCache.length)
     } catch (e) {
         console.log("Stops error", e.message)
     }
 }
 
 // =======================
-// 🚌 ПРИСТИГАНИЯ
+// 🚌 ПРИСТИГАНИЯ (BATCH)
 // =======================
-async function loadArrivals() {
-    if (!stopsCache.length) return
-
-    let currentIndex = 0
+let currentIndex = 0
 const BATCH_SIZE = 20
 
 async function loadArrivalsBatch() {
     if (!stopsCache.length) return
-    if (!serverActive) return
 
     const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
 
@@ -47,28 +43,22 @@ async function loadArrivalsBatch() {
         try {
             const res = await fetch(`${API}/virtual-board/${stop.id}?limit=20`)
             const data = await res.json()
-
             arrivalsCache[stop.id] = data.departures || []
-
         } catch (e) {
             console.log("Arrivals error:", stop.id)
         }
     }
 
     currentIndex += BATCH_SIZE
-
-    if (currentIndex >= stopsCache.length) {
-        currentIndex = 0
-    }
+    if (currentIndex >= stopsCache.length) currentIndex = 0
 
     console.log("Batch updated:", currentIndex)
 }
 
 // =======================
-// 📡 LIVE GPS (WebSocket)
+// 📡 LIVE GPS
 // =======================
 function connectWS() {
-    const WebSocket = require("ws")
     const ws = new WebSocket(WS)
 
     ws.on("open", () => {
@@ -77,8 +67,7 @@ function connectWS() {
 
     ws.on("message", (msg) => {
         try {
-            const data = JSON.parse(msg)
-            vehiclesCache = data
+            vehiclesCache = JSON.parse(msg)
         } catch (e) {}
     })
 
@@ -89,9 +78,8 @@ function connectWS() {
 }
 
 // =======================
-// 🌐 API ENDPOINTS
+// 🌐 API
 // =======================
-
 app.get("/stops", (req, res) => {
     res.json(stopsCache)
 })
@@ -105,21 +93,24 @@ app.get("/vehicles", (req, res) => {
 })
 
 // =======================
-// ⏱ START
+// 🚀 START
 // =======================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000
 
 app.listen(PORT, () => {
-    console.log("Server running on port " + PORT);
-});
+    console.log("Server running on port " + PORT)
+})
 
-// 🔥 стартиране на логиката
+// стартиране
 async function startServer() {
-    await loadStops();
-    await loadArrivals();
-    connectWS();
+    await loadStops()
+    connectWS()
 
-    setInterval(loadArrivals, 60000); // 60 сек
+    // 🔥 въртим batch на всеки 3 сек (няма да надвишиш лимита)
+    setInterval(loadArrivalsBatch, 3000)
+
+    // обновяване на спирките на 5 мин
+    setInterval(loadStops, 300000)
 }
 
-startServer();
+startServer()
