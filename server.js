@@ -5,18 +5,15 @@ const app = express()
 const PORT = process.env.PORT || 3000
 
 const API = "https://api.livetransport.eu/stara-zagora"
-const WS_URL = "wss://api.livetransport.eu/stara-zagora"
+const WS = "wss://api.livetransport.eu/stara-zagora"
 
 let stopsCache = []
 let arrivalsCache = {}
 let vehiclesCache = []
 
-let ws = null
-let isWSConnected = false
-
 // FETCH
 const fetch = (...args) =>
-    import("node-fetch").then(({ default: fetch }) => fetch(...args))
+    import('node-fetch').then(({default: fetch}) => fetch(...args))
 
 // =======================
 // СПИРКИ
@@ -24,24 +21,16 @@ const fetch = (...args) =>
 async function loadStops() {
     try {
         const res = await fetch(`${API}/data`)
-        const text = await res.text()
-
-        if (!text.startsWith("{")) {
-            console.log("Invalid response:", text)
-            return
-        }
-
-        const data = JSON.parse(text)
+        const data = await res.json()
         stopsCache = data.stops || []
-
         console.log("Stops:", stopsCache.length)
     } catch (e) {
-        console.log("Stops error:", e.message)
+        console.log("Stops error", e.message)
     }
 }
 
 // =======================
-// ARRIVALS (SMART LOOP)
+// ARRIVALS (BATCH)
 // =======================
 let currentIndex = 0
 const BATCH_SIZE = 10
@@ -55,15 +44,8 @@ async function loadArrivals() {
     for (const stop of batch) {
         try {
             const res = await fetch(`${API}/virtual-board/${stop.id}?limit=20`)
+            const data = await res.json()
 
-            const text = await res.text()
-
-            if (!text.startsWith("{")) {
-                console.log("Rate limited:", stop.id)
-                continue
-            }
-
-            const data = JSON.parse(text)
             arrivalsCache[stop.id] = data.departures || []
 
         } catch (e) {
@@ -79,65 +61,35 @@ async function loadArrivals() {
         currentIndex = 0
     }
 
-    console.log("Batch done:", currentIndex)
+    console.log("Batch:", currentIndex)
 }
 
 // =======================
-// WEBSOCKET (FIXED)
+// WEBSOCKET (СТАРИЯТ РАБОТЕЩ)
 // =======================
 function connectWS() {
 
     console.log("Connecting WS...")
 
-    ws = new WebSocket(WS_URL)
+    const ws = new WebSocket(WS)
 
     ws.on("open", () => {
-        isWSConnected = true
         console.log("WS connected")
-
-        // 🔥 ЗАДЪЛЖИТЕЛНО
-        ws.send(JSON.stringify({
-            action: "subscribe",
-            channel: "vehicles"
-        }))
     })
 
     ws.on("message", (msg) => {
         try {
             const data = JSON.parse(msg)
-
             vehiclesCache = data
 
             console.log("Vehicles:", Array.isArray(data) ? data.length : "?")
-
         } catch {}
     })
 
     ws.on("close", () => {
-        isWSConnected = false
         console.log("WS reconnect...")
-        setTimeout(connectWS, 3000)
+        setTimeout(connectWS, 2000)
     })
-
-    ws.on("error", (err) => {
-        console.log("WS error:", err.message)
-    })
-}
-
-// =======================
-// HTTP fallback (много важно)
-// =======================
-async function loadVehicles() {
-    try {
-        const res = await fetch(`${API}/vehicles`)
-        const data = await res.json()
-
-        vehiclesCache = data
-
-        console.log("Vehicles HTTP:", data.length)
-    } catch {
-        console.log("Vehicles HTTP error")
-    }
 }
 
 // =======================
@@ -162,20 +114,13 @@ app.get("/vehicles", (req, res) => {
 // =======================
 // START
 // =======================
-app.listen(PORT, () => {
-    console.log("Server running on port " + PORT)
-})
+app.listen(PORT, async () => {
 
-// =======================
-// MAIN
-// =======================
-async function startServer() {
-
-    console.log("Starting server...")
+    console.log("Server started")
 
     await loadStops()
 
-    // 🔥 първоначално (само частично)
+    // първоначално зареждане (частично)
     for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
         try {
             const res = await fetch(`${API}/virtual-board/${stopsCache[i].id}?limit=20`)
@@ -187,16 +132,12 @@ async function startServer() {
         } catch {}
     }
 
-    console.log("Initial load DONE")
+    console.log("Initial load done")
 
     connectWS()
 
-    // 🔥 ТОВА Е КЛЮЧА
-    setInterval(loadArrivals, 5000) // НЕ 60 сек!!!
+    // 🔥 ключово
+    setInterval(loadArrivals, 5000)
 
     setInterval(loadStops, 5 * 60 * 1000)
-
-    setInterval(loadVehicles, 5000) // fallback
-}
-
-startServer()
+})
