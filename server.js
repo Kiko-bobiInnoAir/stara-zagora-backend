@@ -63,40 +63,28 @@ async function loadStops() {
 // =======================
 let currentIndex = 0
 
-async function arrivalsLoop() {
-    while (true) {
+async function loadArrivals() {
 
-        if (!isServerActive()) {
-            console.log("🌙 Night mode - arrivals paused")
-            await delay(5000)
-            continue
-        }
+    if (!stopsCache.length) return
 
-        if (!stopsCache.length) {
-            await delay(2000)
-            continue
-        }
-
-        const stop = stopsCache[currentIndex]
-
+    for (const stop of stopsCache) {
         try {
+
             const res = await fetch(`${API}/virtual-board/${stop.id}?limit=20`)
             const data = await res.json()
 
             arrivalsCache[stop.id] = data.departures || []
 
+            await new Promise(r => setTimeout(r, 300)) // 🔥 лимит
+
         } catch (e) {
-            console.log("Arrival error:", stop.id)
+            console.log("Arrivals error:", stop.id)
         }
-
-        currentIndex++
-        if (currentIndex >= stopsCache.length) {
-            currentIndex = 0
-        }
-
-        await delay(REQUEST_DELAY)
     }
+
+    console.log("Arrivals обновени")
 }
+
 
 // =======================
 // WEBSOCKET
@@ -173,20 +161,36 @@ app.listen(PORT, () => {
 // MAIN
 // =======================
 async function startServer() {
+
+    console.log("Starting server...")
+
+    // 1. Зареждаме спирките
     await loadStops()
 
+    // 2. Първоначално пълнене (много важно)
+   for (let i = 0; i < Math.min(stopsCache.length, 80); i++) {
+        try {
+            const res = await fetch(`${API}/virtual-board/${stopsCache[i].id}?limit=20`)
+            const data = await res.json()
+            arrivalsCache[stopsCache[i].id] = data.departures || []
+
+            await new Promise(r => setTimeout(r, 300)) // 🔥 лимит контрол
+
+        } catch (e) {
+            console.log("Init error:", stopsCache[i].id)
+        }
+    }
+
+    console.log("Initial load DONE")
+
+    // 3. LIVE GPS
     connectWS()
 
-    arrivalsLoop() // 🔥 continuous controlled loop
+    // 4. Обновяване на пристигания (НА ВСЯКА 1 МИНУТА)
+    setInterval(loadArrivals, 60000)
 
-    setInterval(() => {
-        if (!isServerActive()) {
-            stopWS()
-            clearCache()
-        } else {
-            connectWS()
-        }
-    }, 60000)
+    // 5. Обновяване на спирки (на 5 мин)
+    setInterval(loadStops, 5 * 60 * 1000)
 }
 
 startServer()
