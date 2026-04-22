@@ -14,35 +14,9 @@ let vehiclesCache = []
 let ws = null
 let isWSConnected = false
 
-// =======================
-// FETCH FIX
-// =======================
+// FETCH
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
-
-// =======================
-// RATE LIMIT CONTROL
-// =======================
-const REQUESTS_PER_SECOND = 3
-const REQUEST_DELAY = 1000 / REQUESTS_PER_SECOND
-
-function delay(ms) {
-    return new Promise(res => setTimeout(res, ms))
-}
-
-// =======================
-// НОЩЕН РЕЖИМ
-// =======================
-function isServerActive() {
-    const hour = new Date().toLocaleString("en-US", {
-        timeZone: "Europe/Sofia",
-        hour: "numeric",
-        hour12: false
-    })
-
-    const h = parseInt(hour)
-    return !(h >= 0 && h < 5)
-}
 
 // =======================
 // СПИРКИ
@@ -50,8 +24,16 @@ function isServerActive() {
 async function loadStops() {
     try {
         const res = await fetch(`${API}/data`)
-        const data = await res.json()
+        const text = await res.text()
+
+        if (!text.startsWith("{")) {
+            console.log("Invalid response:", text)
+            return
+        }
+
+        const data = JSON.parse(text)
         stopsCache = data.stops || []
+
         console.log("Stops:", stopsCache.length)
     } catch (e) {
         console.log("Stops error:", e.message)
@@ -62,47 +44,72 @@ async function loadStops() {
 // ARRIVALS (SMART LOOP)
 // =======================
 let currentIndex = 0
+const BATCH_SIZE = 10
 
 async function loadArrivals() {
 
     if (!stopsCache.length) return
 
-    for (const stop of stopsCache) {
+    const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
+
+    for (const stop of batch) {
         try {
-
             const res = await fetch(`${API}/virtual-board/${stop.id}?limit=20`)
-            const data = await res.json()
 
+            const text = await res.text()
+
+            if (!text.startsWith("{")) {
+                console.log("Rate limited:", stop.id)
+                continue
+            }
+
+            const data = JSON.parse(text)
             arrivalsCache[stop.id] = data.departures || []
-
-            await new Promise(r => setTimeout(r, 300)) // 🔥 лимит
 
         } catch (e) {
             console.log("Arrivals error:", stop.id)
         }
+
+        await new Promise(r => setTimeout(r, 400))
     }
 
-    console.log("Arrivals обновени")
+    currentIndex += BATCH_SIZE
+
+    if (currentIndex >= stopsCache.length) {
+        currentIndex = 0
+    }
+
+    console.log("Batch done:", currentIndex)
 }
 
-
 // =======================
-// WEBSOCKET
+// WEBSOCKET (FIXED)
 // =======================
 function connectWS() {
-    if (!isServerActive()) return
-    if (isWSConnected) return
+
+    console.log("Connecting WS...")
 
     ws = new WebSocket(WS_URL)
 
     ws.on("open", () => {
         isWSConnected = true
         console.log("WS connected")
+
+        // 🔥 ЗАДЪЛЖИТЕЛНО
+        ws.send(JSON.stringify({
+            action: "subscribe",
+            channel: "vehicles"
+        }))
     })
 
     ws.on("message", (msg) => {
         try {
-            vehiclesCache = JSON.parse(msg)
+            const data = JSON.parse(msg)
+
+            vehiclesCache = data
+
+            console.log("Vehicles:", Array.isArray(data) ? data.length : "?")
+
         } catch {}
     })
 
@@ -111,24 +118,26 @@ function connectWS() {
         console.log("WS reconnect...")
         setTimeout(connectWS, 3000)
     })
+
+    ws.on("error", (err) => {
+        console.log("WS error:", err.message)
+    })
 }
 
-function stopWS() {
-    if (ws && isWSConnected) {
-        ws.close()
-        ws = null
-        isWSConnected = false
-        console.log("WS stopped")
+// =======================
+// HTTP fallback (много важно)
+// =======================
+async function loadVehicles() {
+    try {
+        const res = await fetch(`${API}/vehicles`)
+        const data = await res.json()
+
+        vehiclesCache = data
+
+        console.log("Vehicles HTTP:", data.length)
+    } catch {
+        console.log("Vehicles HTTP error")
     }
-}
-
-// =======================
-// CACHE CLEAN
-// =======================
-function clearCache() {
-    arrivalsCache = {}
-    vehiclesCache = []
-    console.log("Cache cleared")
 }
 
 // =======================
@@ -164,33 +173,30 @@ async function startServer() {
 
     console.log("Starting server...")
 
-    // 1. Зареждаме спирките
     await loadStops()
 
-    // 2. Първоначално пълнене (много важно)
-   for (let i = 0; i < Math.min(stopsCache.length, 80); i++) {
+    // 🔥 първоначално (само частично)
+    for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
         try {
             const res = await fetch(`${API}/virtual-board/${stopsCache[i].id}?limit=20`)
             const data = await res.json()
+
             arrivalsCache[stopsCache[i].id] = data.departures || []
 
-            await new Promise(r => setTimeout(r, 300)) // 🔥 лимит контрол
-
-        } catch (e) {
-            console.log("Init error:", stopsCache[i].id)
-        }
+            await new Promise(r => setTimeout(r, 300))
+        } catch {}
     }
 
     console.log("Initial load DONE")
 
-    // 3. LIVE GPS
     connectWS()
 
-    // 4. Обновяване на пристигания (НА ВСЯКА 1 МИНУТА)
-    setInterval(loadArrivals, 60000)
+    // 🔥 ТОВА Е КЛЮЧА
+    setInterval(loadArrivals, 5000) // НЕ 60 сек!!!
 
-    // 5. Обновяване на спирки (на 5 мин)
     setInterval(loadStops, 5 * 60 * 1000)
+
+    setInterval(loadVehicles, 5000) // fallback
 }
 
 startServer()
