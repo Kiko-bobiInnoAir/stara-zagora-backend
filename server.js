@@ -13,6 +13,7 @@ let vehiclesCache = []
 
 let ws = null
 let isWSConnected = false
+const lockedVehicles = {}
 
 // =======================
 // FETCH
@@ -223,70 +224,87 @@ app.get("/vehicles", (req, res) => {
 app.get("/liveTracking", async (req, res) => {
 
     const tripId = req.query.tripId
-    if (!tripId) return res.json({ error: "Missing tripId" })
+
+    if (!tripId) {
+        return res.json({ error: "Missing tripId" })
+    }
 
     try {
 
-        let foundVehicle = null
+        // =======================
+        // 1️⃣ ако вече имаме LOCK → ползваме го
+        // =======================
+        let foundVehicle = lockedVehicles[tripId]
         let foundLine = null
 
-        // 🔍 намираме от arrivals
-        for (const stopId in arrivalsCache) {
-            for (const a of arrivalsCache[stopId]) {
-                if (a.tripId === tripId) {
-                    foundVehicle = a.vehicleId || null
-                    foundLine = a.lineId
-                    break
+        if (!foundVehicle) {
+
+            // =======================
+            // 2️⃣ намираме vehicle от arrivals
+            // =======================
+            for (const stopId in arrivalsCache) {
+                const arrivals = arrivalsCache[stopId]
+
+                for (const a of arrivals) {
+                    if (a.tripId === tripId && a.vehicleId) {
+                        foundVehicle = a.vehicleId
+                        foundLine = a.lineId
+                        break
+                    }
                 }
+
+                if (foundVehicle) break
             }
-            if (foundLine) break
+
+            if (!foundVehicle) {
+                return res.json({ error: "Vehicle not found yet" })
+            }
+
+            // 🔒 LOCK
+            lockedVehicles[tripId] = foundVehicle
+
+            console.log("LOCKED:", tripId, "→", foundVehicle)
         }
 
-        // 🔥 ако няма vehicle → пак работим по линия
-       const vehicle = findVehicleSmart(foundVehicle, foundLine, tripId)
+        // =======================
+        // 3️⃣ GPS
+        // =======================
+        const vehicle = vehiclesCache.find(v => {
+            const id = (v[0] || "").split("/").pop()
+            const target = (foundVehicle || "").split("/").pop()
+            return id === target
+        })
 
         if (!vehicle) {
-            return res.json({ error: "No vehicle for this line" })
+            return res.json({ error: "Vehicle position not found" })
         }
 
         const coords = vehicle[6] || [0, 0]
 
-        // 🔥 ползваме РЕАЛНИЯ vehicleId от WS
-        const realVehicleId = vehicle[0]
+        // =======================
+        // 4️⃣ TRIP DATA
+        // =======================
+        const tripData = await getTrip(foundVehicle)
 
-        const tripData = await getTrip(realVehicleId)
-
-        let nextStop = 0
-        let delay = 0
-        let stops = []
-        let shape = ""
-
-        if (tripData) {
-            nextStop = tripData.nextStop || 0
-            delay = tripData.delay || 0
-            stops = tripData.trip?.stops || []
-            shape = tripData.trip?.shape || ""
-        } else {
-            // 🔥 fallback ETA от движение
-            delay = estimateDelayFromMovement(vehicle)
+        if (!tripData) {
+            return res.json({ error: "Trip data missing" })
         }
 
         return res.json({
-            vehicleId: realVehicleId,
-            lineId: foundLine,
+            vehicleId: foundVehicle,
             lat: coords[0],
             lon: coords[1],
-            nextStop,
-            delay,
-            stops,
-            shape
+            nextStop: tripData.nextStop,
+            delay: tripData.delay,
+            stops: tripData.trip?.stops || [],
+            shape: tripData.trip?.shape || ""
         })
 
     } catch (e) {
+        console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
     }
 })
-
 // =======================
 // START
 // =======================
