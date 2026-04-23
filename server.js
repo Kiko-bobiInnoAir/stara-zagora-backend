@@ -181,6 +181,109 @@ app.listen(PORT, () => {
     console.log("Server running on port " + PORT)
 })
 
+
+// =======================
+// LIVE TRACKING (НОВО)
+// =======================
+
+const tripCache = {}
+const TRIP_CACHE_TTL = 10000 // 10 сек
+
+async function getTrip(vehicleId) {
+    try {
+        const now = Date.now()
+
+        if (
+            tripCache[vehicleId] &&
+            now - tripCache[vehicleId].time < TRIP_CACHE_TTL
+        ) {
+            return tripCache[vehicleId].data
+        }
+
+        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
+
+        if (!res.ok) return null
+
+        const data = await res.json()
+
+        tripCache[vehicleId] = {
+            data,
+            time: now
+        }
+
+        return data
+
+    } catch (e) {
+        console.log("Trip error:", e.message)
+        return null
+    }
+}
+
+app.get("/liveTracking", async (req, res) => {
+
+    const tripId = req.query.tripId
+
+    if (!tripId) {
+        return res.json({ error: "Missing tripId" })
+    }
+
+    try {
+
+        // 1️⃣ намираме vehicleId от arrivalsCache
+        let foundVehicle = null
+        let foundLine = null
+
+        for (const stopId in arrivalsCache) {
+            const arrivals = arrivalsCache[stopId]
+
+            for (const a of arrivals) {
+                if (a.tripId === tripId && a.vehicleId) {
+                    foundVehicle = a.vehicleId
+                    foundLine = a.lineId
+                    break
+                }
+            }
+
+            if (foundVehicle) break
+        }
+
+        if (!foundVehicle) {
+            return res.json({ error: "Vehicle not found yet" })
+        }
+
+        // 2️⃣ намираме GPS
+        const vehicle = vehiclesCache.find(v => v[0] === foundVehicle)
+
+        if (!vehicle) {
+            return res.json({ error: "Vehicle position not found" })
+        }
+
+        const coords = vehicle[6] || [0, 0]
+
+        // 3️⃣ trip info
+        const tripData = await getTrip(foundVehicle)
+
+        if (!tripData) {
+            return res.json({ error: "Trip data missing" })
+        }
+
+        return res.json({
+            vehicleId: foundVehicle,
+            lineId: foundLine,
+            lat: coords[0],
+            lon: coords[1],
+            nextStop: tripData.nextStop,
+            delay: tripData.delay,
+            stops: tripData.trip?.stops || [],
+            shape: tripData.trip?.shape || ""
+        })
+
+    } catch (e) {
+        console.log("Live error:", e.message)
+        res.json({ error: "Internal error" })
+    }
+})
+
 // =======================
 // MAIN
 // =======================
