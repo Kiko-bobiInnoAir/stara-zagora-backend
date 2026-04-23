@@ -252,7 +252,14 @@ app.get("/liveTracking", async (req, res) => {
         }
 
         // 2️⃣ намираме GPS
-        const vehicle = vehiclesCache.find(v => v[0] === foundVehicle)
+        const vehicle = vehiclesCache.find(v => {
+    const id = v[0]
+
+    const clean1 = id.split("/").pop()
+    const clean2 = foundVehicle.split("/").pop()
+
+    return clean1 === clean2
+})
 
         if (!vehicle) {
             return res.json({ error: "Vehicle position not found" })
