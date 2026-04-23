@@ -125,11 +125,11 @@ function connectWS() {
 // =======================
 
 // 🔥 намира vehicle по номер (3573)
-function findVehicleSmart(foundVehicle, lineId) {
+function findVehicleSmart(foundVehicle, foundLine, tripId) {
 
     const target = (foundVehicle || "").split("/").pop()
 
-    // 1️⃣ точен match
+    // 1️⃣ ТОЧЕН match по vehicleId
     let v = vehiclesCache.find(x => {
         const id = (x[0] || "").split("/").pop()
         return id === target
@@ -137,10 +137,18 @@ function findVehicleSmart(foundVehicle, lineId) {
 
     if (v) return v
 
-    // 2️⃣ fallback по линия
-    v = vehiclesCache.find(x => x[2] == lineId)
+    // 2️⃣ match по линия + посока (directionId = x[3])
+    // tripId съдържа посоката вътре
+    const direction = tripId?.split("_")[3] || null
 
-    return v || null
+    v = vehiclesCache.find(x => {
+        return x[2] == foundLine && x[3] == direction
+    })
+
+    if (v) return v
+
+    // 3️⃣ последен fallback – само линия
+    return vehiclesCache.find(x => x[2] == foundLine) || null
 }
 
 // 🔥 изчислява ETA по GPS ако няма trip
@@ -235,7 +243,7 @@ app.get("/liveTracking", async (req, res) => {
         }
 
         // 🔥 ако няма vehicle → пак работим по линия
-        const vehicle = findVehicleSmart(foundVehicle, foundLine)
+       const vehicle = findVehicleSmart(foundVehicle, foundLine, tripId)
 
         if (!vehicle) {
             return res.json({ error: "No vehicle for this line" })
