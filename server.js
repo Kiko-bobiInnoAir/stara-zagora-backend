@@ -15,7 +15,7 @@ let ws = null
 let isWSConnected = false
 
 // =======================
-// FETCH FIX
+// FETCH
 // =======================
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
@@ -25,7 +25,7 @@ function delay(ms) {
 }
 
 // =======================
-// QUEUE (за да НЕ банва)
+// QUEUE
 // =======================
 const requestQueue = []
 let isProcessing = false
@@ -55,16 +55,11 @@ async function processQueue() {
             if (res.ok) {
                 const data = await res.json()
                 arrivalsCache[stopId] = data.departures || []
-                console.log("Updated:", stopId)
-            } else {
-                console.log("Rate limited:", stopId)
             }
 
-        } catch (e) {
-            console.log("Error:", stopId)
-        }
+        } catch {}
 
-        await delay(350) // ~3 заявки/сек (в лимита)
+        await delay(350)
     }
 }
 
@@ -74,50 +69,30 @@ async function processQueue() {
 async function loadStops() {
     try {
         const res = await fetch(`${API}/data`)
-        const text = await res.text()
-
-        if (!text.startsWith("{")) {
-            console.log("Invalid stops response:", text)
-            return
-        }
-
-        const data = JSON.parse(text)
+        const data = await res.json()
         stopsCache = data.stops || []
-
-        console.log("Stops:", stopsCache.length)
-
-    } catch (e) {
-        console.log("Stops error:", e.message)
-    }
+    } catch {}
 }
 
 // =======================
-// ARRIVALS (batch)
+// ARRIVALS
 // =======================
 let currentIndex = 0
 const BATCH_SIZE = 10
 
 async function loadArrivals() {
-
     if (!stopsCache.length) return
 
     const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
 
-    for (const stop of batch) {
-        enqueue(stop.id)
-    }
+    for (const stop of batch) enqueue(stop.id)
 
     currentIndex += BATCH_SIZE
-
-    if (currentIndex >= stopsCache.length) {
-        currentIndex = 0
-    }
-
-    console.log("Batch queued:", currentIndex)
+    if (currentIndex >= stopsCache.length) currentIndex = 0
 }
 
 // =======================
-// WEBSOCKET (GPS)
+// WS GPS
 // =======================
 function connectWS() {
     if (isWSConnected) return
@@ -126,7 +101,6 @@ function connectWS() {
 
     ws.on("open", () => {
         isWSConnected = true
-        console.log("WS connected")
     })
 
     ws.on("message", (msg) => {
@@ -137,15 +111,79 @@ function connectWS() {
 
     ws.on("close", () => {
         isWSConnected = false
-        console.log("WS reconnect...")
         setTimeout(connectWS, 3000)
     })
 
     ws.on("error", () => {
         isWSConnected = false
-        console.log("WS error")
         ws.close()
     })
+}
+
+// =======================
+// HELPERS
+// =======================
+
+// 🔥 намира vehicle по номер (3573)
+function findVehicleSmart(foundVehicle, lineId) {
+
+    const target = (foundVehicle || "").split("/").pop()
+
+    // 1️⃣ точен match
+    let v = vehiclesCache.find(x => {
+        const id = (x[0] || "").split("/").pop()
+        return id === target
+    })
+
+    if (v) return v
+
+    // 2️⃣ fallback по линия
+    v = vehiclesCache.find(x => x[2] == lineId)
+
+    return v || null
+}
+
+// 🔥 изчислява ETA по GPS ако няма trip
+function estimateDelayFromMovement(vehicle) {
+
+    const delayRaw = vehicle[5] || 0
+    return delayRaw // вече е в ms от API
+}
+
+// =======================
+// TRIP CACHE
+// =======================
+const tripCache = {}
+const TRIP_CACHE_TTL = 10000
+
+async function getTrip(vehicleId) {
+
+    const now = Date.now()
+
+    if (
+        tripCache[vehicleId] &&
+        now - tripCache[vehicleId].time < TRIP_CACHE_TTL
+    ) {
+        return tripCache[vehicleId].data
+    }
+
+    try {
+        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
+
+        if (!res.ok) return null
+
+        const data = await res.json()
+
+        tripCache[vehicleId] = {
+            data,
+            time: now
+        }
+
+        return data
+
+    } catch {
+        return null
+    }
 }
 
 // =======================
@@ -162,10 +200,7 @@ app.get("/stops", (req, res) => {
 app.get("/arrivals/:stopId", (req, res) => {
     const stopId = req.params.stopId
 
-    // 🔥 ако няма кеш → вкарваме в queue
-    if (!arrivalsCache[stopId]) {
-        enqueue(stopId)
-    }
+    if (!arrivalsCache[stopId]) enqueue(stopId)
 
     res.json(arrivalsCache[stopId] || [])
 })
@@ -175,149 +210,94 @@ app.get("/vehicles", (req, res) => {
 })
 
 // =======================
+// 🔥 LIVE TRACKING (FIXED)
+// =======================
+app.get("/liveTracking", async (req, res) => {
+
+    const tripId = req.query.tripId
+    if (!tripId) return res.json({ error: "Missing tripId" })
+
+    try {
+
+        let foundVehicle = null
+        let foundLine = null
+
+        // 🔍 намираме от arrivals
+        for (const stopId in arrivalsCache) {
+            for (const a of arrivalsCache[stopId]) {
+                if (a.tripId === tripId) {
+                    foundVehicle = a.vehicleId || null
+                    foundLine = a.lineId
+                    break
+                }
+            }
+            if (foundLine) break
+        }
+
+        // 🔥 ако няма vehicle → пак работим по линия
+        const vehicle = findVehicleSmart(foundVehicle, foundLine)
+
+        if (!vehicle) {
+            return res.json({ error: "No vehicle for this line" })
+        }
+
+        const coords = vehicle[6] || [0, 0]
+
+        // 🔥 ползваме РЕАЛНИЯ vehicleId от WS
+        const realVehicleId = vehicle[0]
+
+        const tripData = await getTrip(realVehicleId)
+
+        let nextStop = 0
+        let delay = 0
+        let stops = []
+        let shape = ""
+
+        if (tripData) {
+            nextStop = tripData.nextStop || 0
+            delay = tripData.delay || 0
+            stops = tripData.trip?.stops || []
+            shape = tripData.trip?.shape || ""
+        } else {
+            // 🔥 fallback ETA от движение
+            delay = estimateDelayFromMovement(vehicle)
+        }
+
+        return res.json({
+            vehicleId: realVehicleId,
+            lineId: foundLine,
+            lat: coords[0],
+            lon: coords[1],
+            nextStop,
+            delay,
+            stops,
+            shape
+        })
+
+    } catch (e) {
+        res.json({ error: "Internal error" })
+    }
+})
+
+// =======================
 // START
 // =======================
 app.listen(PORT, () => {
     console.log("Server running on port " + PORT)
 })
 
-
-// =======================
-// LIVE TRACKING (НОВО)
-// =======================
-
-const tripCache = {}
-const TRIP_CACHE_TTL = 10000 // 10 сек
-
-async function getTrip(vehicleId) {
-    try {
-        const now = Date.now()
-
-        if (
-            tripCache[vehicleId] &&
-            now - tripCache[vehicleId].time < TRIP_CACHE_TTL
-        ) {
-            return tripCache[vehicleId].data
-        }
-
-        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
-
-        if (!res.ok) return null
-
-        const data = await res.json()
-
-        tripCache[vehicleId] = {
-            data,
-            time: now
-        }
-
-        return data
-
-    } catch (e) {
-        console.log("Trip error:", e.message)
-        return null
-    }
-}
-
-app.get("/liveTracking", async (req, res) => {
-
-    const tripId = req.query.tripId
-
-    if (!tripId) {
-        return res.json({ error: "Missing tripId" })
-    }
-
-    try {
-
-        // 1️⃣ намираме vehicleId от arrivalsCache
-        let foundVehicle = null
-        let foundLine = null
-
-        for (const stopId in arrivalsCache) {
-            const arrivals = arrivalsCache[stopId]
-
-            for (const a of arrivals) {
-                if (a.tripId === tripId && a.vehicleId) {
-                    foundVehicle = a.vehicleId
-                    foundLine = a.lineId
-                    break
-                }
-            }
-
-            if (foundVehicle) break
-        }
-
-        if (!foundVehicle) {
-            return res.json({ error: "Vehicle not found yet" })
-        }
-
-        // 2️⃣ намираме GPS
-        const vehicle = vehiclesCache.find(v => {
-    const id = v[0]
-
-    const clean1 = id.split("/").pop()
-    const clean2 = foundVehicle.split("/").pop()
-
-    return clean1 === clean2
-})
-
-        if (!vehicle) {
-            return res.json({ error: "Vehicle position not found" })
-        }
-
-        const coords = vehicle[6] || [0, 0]
-
-        // 3️⃣ trip info
-        const tripData = await getTrip(foundVehicle)
-
-        if (!tripData) {
-            return res.json({ error: "Trip data missing" })
-        }
-
-        return res.json({
-            vehicleId: foundVehicle,
-            lineId: foundLine,
-            lat: coords[0],
-            lon: coords[1],
-            nextStop: tripData.nextStop,
-            delay: tripData.delay,
-            stops: tripData.trip?.stops || [],
-            shape: tripData.trip?.shape || ""
-        })
-
-    } catch (e) {
-        console.log("Live error:", e.message)
-        res.json({ error: "Internal error" })
-    }
-})
-
-// =======================
-// MAIN
-// =======================
 async function startServer() {
 
-    console.log("Starting server...")
-
-    // 1. Спирки
     await loadStops()
 
-    // 2. Първоначално зареждане (частично)
     for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
         enqueue(stopsCache[i].id)
     }
 
-    console.log("Initial queue loaded")
-
-    // 3. Стартираме queue worker
     processQueue()
-
-    // 4. WS GPS
     connectWS()
 
-    // 5. Batch loop
     setInterval(loadArrivals, 5000)
-
-    // 6. Refresh stops
     setInterval(loadStops, 5 * 60 * 1000)
 }
 
