@@ -231,49 +231,44 @@ app.get("/liveTracking", async (req, res) => {
 
     try {
 
-        // =======================
-        // 1️⃣ ако вече имаме LOCK → ползваме го
-        // =======================
-        let foundVehicle = lockedVehicles[tripId]
-        let foundLine = null
+        let vehicleId = lockedVehicles[tripId]
 
-        if (!foundVehicle) {
+        // 🧠 ако НЯМА lock → намираме и го заключваме
+        if (!vehicleId) {
 
-            // =======================
-            // 2️⃣ намираме vehicle от arrivals
-            // =======================
             for (const stopId in arrivalsCache) {
                 const arrivals = arrivalsCache[stopId]
 
                 for (const a of arrivals) {
                     if (a.tripId === tripId && a.vehicleId) {
-                        foundVehicle = a.vehicleId
-                        foundLine = a.lineId
+
+                        vehicleId = a.vehicleId
+                        lockedVehicles[tripId] = vehicleId // 🔒 LOCK
+
+                        console.log("LOCKED:", tripId, vehicleId)
                         break
                     }
                 }
 
-                if (foundVehicle) break
+                if (vehicleId) break
             }
+        }
 
-            if (!foundVehicle) {
-                return res.json({ error: "Vehicle not found yet" })
-            }
-
-            // 🔒 LOCK
-            lockedVehicles[tripId] = foundVehicle
-
-            console.log("LOCKED:", tripId, "→", foundVehicle)
+        if (!vehicleId) {
+            return res.json({ error: "Vehicle not found yet" })
         }
 
         // =======================
-        // 3️⃣ GPS
+        // GPS (ПО-СТАБИЛНО)
         // =======================
+        const cleanTarget = vehicleId.split("/").pop()
+
         const vehicle = vehiclesCache.find(v => {
-            const id = (v[0] || "").split("/").pop()
-            const target = (foundVehicle || "").split("/").pop()
-            return id === target
+            const clean = (v[0] || "").split("/").pop()
+            return clean === cleanTarget
         })
+
+console.log("VEHICLE RAW:", vehicle)
 
         if (!vehicle) {
             return res.json({ error: "Vehicle position not found" })
@@ -282,22 +277,18 @@ app.get("/liveTracking", async (req, res) => {
         const coords = vehicle[6] || [0, 0]
 
         // =======================
-        // 4️⃣ TRIP DATA
+        // TRIP DATA (НЕ ЗАДЪЛЖИТЕЛНО)
         // =======================
-        const tripData = await getTrip(foundVehicle)
-
-        if (!tripData) {
-            return res.json({ error: "Trip data missing" })
-        }
+        const tripData = await getTrip(vehicleId)
 
         return res.json({
-            vehicleId: foundVehicle,
+            vehicleId,
             lat: coords[0],
             lon: coords[1],
-            nextStop: tripData.nextStop,
-            delay: tripData.delay,
-            stops: tripData.trip?.stops || [],
-            shape: tripData.trip?.shape || ""
+            nextStop: tripData?.nextStop ?? null,
+            delay: tripData?.delay ?? 0,
+            stops: tripData?.trip?.stops ?? [],
+            shape: tripData?.trip?.shape ?? ""
         })
 
     } catch (e) {
@@ -305,7 +296,7 @@ app.get("/liveTracking", async (req, res) => {
         res.json({ error: "Internal error" })
     }
 })
-// =======================
+      // =======================
 // START
 // =======================
 app.listen(PORT, () => {
