@@ -13,7 +13,11 @@ let vehiclesCache = []
 
 let ws = null
 let isWSConnected = false
+
 const lockedVehicles = {}
+const lastKnownPositions = {}
+const speedCache = {}
+const smoothCache = {}
 
 // =======================
 // FETCH
@@ -42,7 +46,6 @@ async function processQueue() {
     isProcessing = true
 
     while (true) {
-
         if (!requestQueue.length) {
             await delay(200)
             continue
@@ -52,12 +55,10 @@ async function processQueue() {
 
         try {
             const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
-
             if (res.ok) {
                 const data = await res.json()
                 arrivalsCache[stopId] = data.departures || []
             }
-
         } catch {}
 
         await delay(350)
@@ -85,7 +86,6 @@ async function loadArrivals() {
     if (!stopsCache.length) return
 
     const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
-
     for (const stop of batch) enqueue(stop.id)
 
     currentIndex += BATCH_SIZE
@@ -124,39 +124,53 @@ function connectWS() {
 // =======================
 // HELPERS
 // =======================
+function distance(lat1, lon1, lat2, lon2) {
+    const R = 6371000
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
 
-// 🔥 намира vehicle по номер (3573)
-function findVehicleSmart(foundVehicle, foundLine, tripId) {
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) *
+        Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2
 
-    const target = (foundVehicle || "").split("/").pop()
-
-    // 1️⃣ ТОЧЕН match по vehicleId
-    let v = vehiclesCache.find(x => {
-        const id = (x[0] || "").split("/").pop()
-        return id === target
-    })
-
-    if (v) return v
-
-    // 2️⃣ match по линия + посока (directionId = x[3])
-    // tripId съдържа посоката вътре
-    const direction = tripId?.split("_")[3] || null
-
-    v = vehiclesCache.find(x => {
-        return x[2] == foundLine && x[3] == direction
-    })
-
-    if (v) return v
-
-    // 3️⃣ последен fallback – само линия
-    return vehiclesCache.find(x => x[2] == foundLine) || null
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-// 🔥 изчислява ETA по GPS ако няма trip
-function estimateDelayFromMovement(vehicle) {
+function lerp(a, b, t) {
+    return a + (b - a) * t
+}
 
-    const delayRaw = vehicle[5] || 0
-    return delayRaw // вече е в ms от API
+function decodePolyline(str) {
+    let index = 0, lat = 0, lng = 0
+    const coordinates = []
+
+    while (index < str.length) {
+        let b, shift = 0, result = 0
+
+        do {
+            b = str.charCodeAt(index++) - 63
+            result |= (b & 0x1f) << shift
+            shift += 5
+        } while (b >= 0x20)
+
+        lat += (result & 1) ? ~(result >> 1) : (result >> 1)
+
+        shift = result = 0
+
+        do {
+            b = str.charCodeAt(index++) - 63
+            result |= (b & 0x1f) << shift
+            shift += 5
+        } while (b >= 0x20)
+
+        lng += (result & 1) ? ~(result >> 1) : (result >> 1)
+
+        coordinates.push([lat / 1e5, lng / 1e5])
+    }
+
+    return coordinates
 }
 
 // =======================
@@ -164,11 +178,14 @@ function estimateDelayFromMovement(vehicle) {
 // =======================
 const tripCache = {}
 const TRIP_CACHE_TTL = 10000
+const tripLastRequest = {}
+const MIN_TRIP_INTERVAL = 5000 // 5 сек
 
 async function getTrip(vehicleId) {
 
     const now = Date.now()
 
+    // ✅ кеш
     if (
         tripCache[vehicleId] &&
         now - tripCache[vehicleId].time < TRIP_CACHE_TTL
@@ -176,10 +193,20 @@ async function getTrip(vehicleId) {
         return tripCache[vehicleId].data
     }
 
+    // 🚫 rate limit защита
+    if (
+        tripLastRequest[vehicleId] &&
+        now - tripLastRequest[vehicleId] < MIN_TRIP_INTERVAL
+    ) {
+        return tripCache[vehicleId]?.data || null
+    }
+
     try {
+        tripLastRequest[vehicleId] = now
+
         const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
 
-        if (!res.ok) return null
+        if (!res.ok) return tripCache[vehicleId]?.data || null
 
         const data = await res.json()
 
@@ -191,65 +218,30 @@ async function getTrip(vehicleId) {
         return data
 
     } catch {
-        return null
+        return tripCache[vehicleId]?.data || null
     }
 }
-
 // =======================
-// API
-// =======================
-app.get("/", (req, res) => {
-    res.send("Backend running")
-})
-
-app.get("/stops", (req, res) => {
-    res.json(stopsCache)
-})
-
-app.get("/arrivals/:stopId", (req, res) => {
-    const stopId = req.params.stopId
-
-    if (!arrivalsCache[stopId]) enqueue(stopId)
-
-    res.json(arrivalsCache[stopId] || [])
-})
-
-app.get("/vehicles", (req, res) => {
-    res.json(vehiclesCache)
-})
-
-// =======================
-// 🔥 LIVE TRACKING (FIXED)
+// LIVE TRACKING
 // =======================
 app.get("/liveTracking", async (req, res) => {
 
     const tripId = req.query.tripId
-
-    if (!tripId) {
-        return res.json({ error: "Missing tripId" })
-    }
+    if (!tripId) return res.json({ error: "Missing tripId" })
 
     try {
 
         let vehicleId = lockedVehicles[tripId]
 
-        // 🧠 ако НЯМА lock → намираме и го заключваме
         if (!vehicleId) {
-
             for (const stopId in arrivalsCache) {
-                const arrivals = arrivalsCache[stopId]
-
-                for (const a of arrivals) {
+                for (const a of arrivalsCache[stopId]) {
                     if (a.tripId === tripId && a.vehicleId) {
-
                         vehicleId = a.vehicleId
-                        lockedVehicles[tripId] = vehicleId // 🔒 LOCK
-
-                        console.log("LOCKED:", tripId, vehicleId)
+                        lockedVehicles[tripId] = vehicleId
                         break
                     }
                 }
-
                 if (vehicleId) break
             }
         }
@@ -258,45 +250,100 @@ app.get("/liveTracking", async (req, res) => {
             return res.json({ error: "Vehicle not found yet" })
         }
 
-        // =======================
-        // GPS (ПО-СТАБИЛНО)
-        // =======================
-        const cleanTarget = vehicleId.split("/").pop()
+        const clean = vehicleId.split("/").pop()
 
-        const vehicle = vehiclesCache.find(v => {
-            const clean = (v[0] || "").split("/").pop()
-            return clean === cleanTarget
-        })
+        let vehicle = vehiclesCache.find(v =>
+            (v[0] || "").split("/").pop() === clean
+        )
 
-console.log("VEHICLE RAW:", vehicle)
-
+        // fallback ако изчезне
         if (!vehicle) {
+            const last = lastKnownPositions[vehicleId]
+            if (last) return res.json(last)
             return res.json({ error: "Vehicle position not found" })
         }
 
         const coords = vehicle[6] || [0, 0]
 
         // =======================
-        // TRIP DATA (НЕ ЗАДЪЛЖИТЕЛНО)
+        // SMOOTH
+        // =======================
+        let lat = coords[0]
+        let lon = coords[1]
+
+        if (smoothCache[vehicleId]) {
+            const prev = smoothCache[vehicleId]
+            lat = lerp(prev.lat, coords[0], 0.3)
+            lon = lerp(prev.lon, coords[1], 0.3)
+        }
+
+        smoothCache[vehicleId] = { lat, lon }
+
+        // =======================
+        // SPEED
+        // =======================
+        const now = Date.now()
+
+        if (speedCache[vehicleId]) {
+            const prev = speedCache[vehicleId]
+            const dist = distance(prev.lat, prev.lon, lat, lon)
+            const time = (now - prev.time) / 1000
+            const speed = time > 0 ? dist / time : 0
+
+            speedCache[vehicleId] = { lat, lon, time: now, speed }
+        } else {
+            speedCache[vehicleId] = { lat, lon, time: now, speed: 0 }
+        }
+
+        const speed = speedCache[vehicleId].speed
+
+        // =======================
+        // TRIP + ETA
         // =======================
         const tripData = await getTrip(vehicleId)
 
-        return res.json({
+        let eta = null
+
+        if (tripData?.trip?.stops?.length && speed > 1) {
+            const next = tripData.trip.stops[tripData.nextStop || 0]
+
+            if (next?.lat) {
+                const dist = distance(lat, lon, next.lat, next.lon)
+                eta = Math.round((dist / speed) / 60)
+            }
+        }
+
+        if (!eta && speed > 1) eta = 1
+
+        // =======================
+        // SHAPE
+        // =======================
+        let shape = []
+        if (tripData?.trip?.shape) {
+            shape = decodePolyline(tripData.trip.shape)
+        }
+
+        const response = {
             vehicleId,
-            lat: coords[0],
-            lon: coords[1],
+            lat,
+            lon,
+            eta,
             nextStop: tripData?.nextStop ?? null,
             delay: tripData?.delay ?? 0,
-            stops: tripData?.trip?.stops ?? [],
-            shape: tripData?.trip?.shape ?? ""
-        })
+            shape
+        }
+
+        lastKnownPositions[vehicleId] = response
+
+        return res.json(response)
 
     } catch (e) {
         console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
     }
 })
-      // =======================
+
+// =======================
 // START
 // =======================
 app.listen(PORT, () => {
@@ -304,7 +351,6 @@ app.listen(PORT, () => {
 })
 
 async function startServer() {
-
     await loadStops()
 
     for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
