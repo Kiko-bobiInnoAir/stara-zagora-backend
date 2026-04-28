@@ -208,6 +208,30 @@ app.get("/vehicles", (req, res) => {
     res.json(vehiclesCache)
 })
 
+
+//////
+function calculateETA(tripData) {
+
+    if (!tripData?.trip?.stops?.length) return null
+
+    const nextIndex = tripData.nextStop || 0
+    const nextStop = tripData.trip.stops[nextIndex]
+
+    if (!nextStop?.scheduled) return null
+
+    const now = Date.now()
+
+    const arrival = nextStop.scheduled + (tripData.delay || 0)
+
+    const diff = arrival - now
+
+    if (diff <= 0) return 0
+
+    return Math.round(diff / 60000)
+}
+
+
+
 // =======================
 // LIVE TRACKING
 // =======================
@@ -223,6 +247,7 @@ app.get("/liveTracking", async (req, res) => {
 
         let vehicleId = lockedVehicles[tripId]
 
+        // 🔒 LOCK
         if (!vehicleId) {
             for (const stopId in arrivalsCache) {
                 for (const a of arrivalsCache[stopId]) {
@@ -249,29 +274,83 @@ app.get("/liveTracking", async (req, res) => {
             (v[0] || "").split("/").pop() === clean
         )
 
-        if (!vehicle) {
+        let lat, lon
+
+        if (vehicle) {
+            const coords = vehicle[6] || [0, 0]
+
+            lat = coords[0]
+            lon = coords[1]
+
+            lastKnownPositions[vehicleId] = { lat, lon }
+
+        } else {
 
             const last = lastKnownPositions[vehicleId]
 
-            if (last) {
-                return res.json({
-                    vehicleId,
-                    lat: last.lat,
-                    lon: last.lon,
-                    eta: last.eta ?? null
-                })
+            if (!last) {
+                return res.json({ error: "Vehicle position not found" })
             }
 
-            return res.json({ error: "Vehicle position not found" })
+            lat = last.lat
+            lon = last.lon
         }
 
-        const coords = vehicle[6] || [0, 0]
+        // =======================
+        // TRIP (истински ETA)
+        // =======================
+        const tripData = await getTrip(vehicleId)
 
-        lastKnownPositions[vehicleId] = {
-            lat: coords[0],
-            lon: coords[1]
+        let eta = null
+
+        if (tripData) {
+            eta = calculateETA(tripData)
         }
 
+        // =======================
+        // FALLBACK GPS ETA
+        // =======================
+        if (eta === null) {
+
+            const now = Date.now()
+            let speed = 0
+
+            if (speedCache[vehicleId]) {
+                const prev = speedCache[vehicleId]
+
+                const dist = distance(prev.lat, prev.lon, lat, lon)
+                const time = (now - prev.time) / 1000
+
+                speed = time > 0 ? dist / time : 0
+            }
+
+            speedCache[vehicleId] = {
+                lat,
+                lon,
+                time: now
+            }
+
+            if (speed > 1) {
+                eta = Math.round(60 / speed)
+            }
+        }
+
+        lastKnownPositions[vehicleId].eta = eta
+
+        return res.json({
+            vehicleId,
+            lat,
+            lon,
+            eta,
+            nextStop: tripData?.nextStop ?? null,
+            delay: tripData?.delay ?? 0
+        })
+
+    } catch (e) {
+        console.log("Live error:", e.message)
+        res.json({ error: "Internal error" })
+    }
+})
         // =======================
         // SPEED + ETA
         // =======================
