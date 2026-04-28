@@ -351,52 +351,7 @@ app.get("/liveTracking", async (req, res) => {
         res.json({ error: "Internal error" })
     }
 })
-        // =======================
-        // SPEED + ETA
-        // =======================
-        const now = Date.now()
-
-        let speed = 0
-
-        if (speedCache[vehicleId]) {
-            const prev = speedCache[vehicleId]
-
-            const dist = distance(prev.lat, prev.lon, coords[0], coords[1])
-            const time = (now - prev.time) / 1000
-
-            speed = time > 0 ? dist / time : 0
-        }
-
-        speedCache[vehicleId] = {
-            lat: coords[0],
-            lon: coords[1],
-            time: now
-        }
-
-        let eta = null
-
-        if (speed > 1) {
-            eta = Math.round(60 / speed) // груб ETA
-        }
-
-        lastKnownPositions[vehicleId].eta = eta
-
-        const tripData = await getTrip(vehicleId)
-
-        return res.json({
-            vehicleId,
-            lat: coords[0],
-            lon: coords[1],
-            eta,
-            nextStop: tripData?.nextStop ?? null
-        })
-
-    } catch (e) {
-        console.log("Live error:", e.message)
-        res.json({ error: "Internal error" })
-    }
-})
-
+       
 // =======================
 // START
 // =======================
