@@ -17,11 +17,7 @@ let isWSConnected = false
 const lockedVehicles = {}
 const lastKnownPositions = {}
 const speedCache = {}
-const smoothCache = {}
 
-// =======================
-// FETCH
-// =======================
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
 
@@ -46,6 +42,7 @@ async function processQueue() {
     isProcessing = true
 
     while (true) {
+
         if (!requestQueue.length) {
             await delay(200)
             continue
@@ -55,13 +52,15 @@ async function processQueue() {
 
         try {
             const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
+
             if (res.ok) {
                 const data = await res.json()
                 arrivalsCache[stopId] = data.departures || []
             }
+
         } catch {}
 
-        await delay(350)
+        await delay(350) // ⚠️ пазим лимита
     }
 }
 
@@ -86,6 +85,7 @@ async function loadArrivals() {
     if (!stopsCache.length) return
 
     const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
+
     for (const stop of batch) enqueue(stop.id)
 
     currentIndex += BATCH_SIZE
@@ -138,54 +138,18 @@ function distance(lat1, lon1, lat2, lon2) {
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-function lerp(a, b, t) {
-    return a + (b - a) * t
-}
-
-function decodePolyline(str) {
-    let index = 0, lat = 0, lng = 0
-    const coordinates = []
-
-    while (index < str.length) {
-        let b, shift = 0, result = 0
-
-        do {
-            b = str.charCodeAt(index++) - 63
-            result |= (b & 0x1f) << shift
-            shift += 5
-        } while (b >= 0x20)
-
-        lat += (result & 1) ? ~(result >> 1) : (result >> 1)
-
-        shift = result = 0
-
-        do {
-            b = str.charCodeAt(index++) - 63
-            result |= (b & 0x1f) << shift
-            shift += 5
-        } while (b >= 0x20)
-
-        lng += (result & 1) ? ~(result >> 1) : (result >> 1)
-
-        coordinates.push([lat / 1e5, lng / 1e5])
-    }
-
-    return coordinates
-}
-
 // =======================
-// TRIP CACHE
+// TRIP CACHE (safe)
 // =======================
 const tripCache = {}
-const TRIP_CACHE_TTL = 10000
 const tripLastRequest = {}
-const MIN_TRIP_INTERVAL = 5000 // 5 сек
+const TRIP_CACHE_TTL = 10000
+const MIN_TRIP_INTERVAL = 5000
 
 async function getTrip(vehicleId) {
 
     const now = Date.now()
 
-    // ✅ кеш
     if (
         tripCache[vehicleId] &&
         now - tripCache[vehicleId].time < TRIP_CACHE_TTL
@@ -193,7 +157,6 @@ async function getTrip(vehicleId) {
         return tripCache[vehicleId].data
     }
 
-    // 🚫 rate limit защита
     if (
         tripLastRequest[vehicleId] &&
         now - tripLastRequest[vehicleId] < MIN_TRIP_INTERVAL
@@ -221,13 +184,40 @@ async function getTrip(vehicleId) {
         return tripCache[vehicleId]?.data || null
     }
 }
+
+// =======================
+// API
+// =======================
+app.get("/", (req, res) => {
+    res.send("Backend running")
+})
+
+app.get("/stops", (req, res) => {
+    res.json(stopsCache)
+})
+
+app.get("/arrivals/:stopId", (req, res) => {
+    const stopId = req.params.stopId
+
+    if (!arrivalsCache[stopId]) enqueue(stopId)
+
+    res.json(arrivalsCache[stopId] || [])
+})
+
+app.get("/vehicles", (req, res) => {
+    res.json(vehiclesCache)
+})
+
 // =======================
 // LIVE TRACKING
 // =======================
 app.get("/liveTracking", async (req, res) => {
 
     const tripId = req.query.tripId
-    if (!tripId) return res.json({ error: "Missing tripId" })
+
+    if (!tripId) {
+        return res.json({ error: "Missing tripId" })
+    }
 
     try {
 
@@ -250,92 +240,77 @@ app.get("/liveTracking", async (req, res) => {
             return res.json({ error: "Vehicle not found yet" })
         }
 
+        // =======================
+        // GPS
+        // =======================
         const clean = vehicleId.split("/").pop()
 
-        let vehicle = vehiclesCache.find(v =>
+        const vehicle = vehiclesCache.find(v =>
             (v[0] || "").split("/").pop() === clean
         )
 
-        // fallback ако изчезне
         if (!vehicle) {
+
             const last = lastKnownPositions[vehicleId]
-            if (last) return res.json(last)
+
+            if (last) {
+                return res.json({
+                    vehicleId,
+                    lat: last.lat,
+                    lon: last.lon,
+                    eta: last.eta ?? null
+                })
+            }
+
             return res.json({ error: "Vehicle position not found" })
         }
 
         const coords = vehicle[6] || [0, 0]
 
-        // =======================
-        // SMOOTH
-        // =======================
-        let lat = coords[0]
-        let lon = coords[1]
-
-        if (smoothCache[vehicleId]) {
-            const prev = smoothCache[vehicleId]
-            lat = lerp(prev.lat, coords[0], 0.3)
-            lon = lerp(prev.lon, coords[1], 0.3)
+        lastKnownPositions[vehicleId] = {
+            lat: coords[0],
+            lon: coords[1]
         }
 
-        smoothCache[vehicleId] = { lat, lon }
-
         // =======================
-        // SPEED
+        // SPEED + ETA
         // =======================
         const now = Date.now()
 
+        let speed = 0
+
         if (speedCache[vehicleId]) {
             const prev = speedCache[vehicleId]
-            const dist = distance(prev.lat, prev.lon, lat, lon)
-            const time = (now - prev.time) / 1000
-            const speed = time > 0 ? dist / time : 0
 
-            speedCache[vehicleId] = { lat, lon, time: now, speed }
-        } else {
-            speedCache[vehicleId] = { lat, lon, time: now, speed: 0 }
+            const dist = distance(prev.lat, prev.lon, coords[0], coords[1])
+            const time = (now - prev.time) / 1000
+
+            speed = time > 0 ? dist / time : 0
         }
 
-        const speed = speedCache[vehicleId].speed
-
-        // =======================
-        // TRIP + ETA
-        // =======================
-        const tripData = await getTrip(vehicleId)
+        speedCache[vehicleId] = {
+            lat: coords[0],
+            lon: coords[1],
+            time: now
+        }
 
         let eta = null
 
-        if (tripData?.trip?.stops?.length && speed > 1) {
-            const next = tripData.trip.stops[tripData.nextStop || 0]
-
-            if (next?.lat) {
-                const dist = distance(lat, lon, next.lat, next.lon)
-                eta = Math.round((dist / speed) / 60)
-            }
+        if (speed > 1) {
+            eta = Math.round(60 / speed) // груб ETA
         }
 
-        if (!eta && speed > 1) eta = 1
+        lastKnownPositions[vehicleId].eta = eta
 
-        // =======================
-        // SHAPE
-        // =======================
-        let shape = []
-        if (tripData?.trip?.shape) {
-            shape = decodePolyline(tripData.trip.shape)
-        }
+        const tripData = await getTrip(vehicleId)
 
-        const response = {
+        return res.json({
             vehicleId,
-            lat,
-            lon,
+            lat: coords[0],
+            lon: coords[1],
             eta,
-            nextStop: tripData?.nextStop ?? null,
-            delay: tripData?.delay ?? 0,
-            shape
-        }
-
-        lastKnownPositions[vehicleId] = response
-
-        return res.json(response)
+            nextStop: tripData?.nextStop ?? null
+        })
 
     } catch (e) {
         console.log("Live error:", e.message)
@@ -351,6 +326,7 @@ app.listen(PORT, () => {
 })
 
 async function startServer() {
+
     await loadStops()
 
     for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
