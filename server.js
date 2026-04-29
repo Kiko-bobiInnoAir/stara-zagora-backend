@@ -337,16 +337,14 @@ app.get("/liveTracking", async (req, res) => {
 
         lastKnownPositions[vehicleId].eta = eta
 
-        return res.json({
+       return res.json({
     vehicleId,
     lat,
     lon,
     eta,
     nextStop: tripData?.nextStop ?? null,
     delay: tripData?.delay ?? 0,
-    lineId: tripData?.trip?.lineId ?? "",
-    stops: tripData?.trip?.stops ?? [],
-    shape: tripData?.trip?.shape ?? ""
+    lineId: tripData?.trip?.lineId ?? ""
 })
 
     } catch (e) {
