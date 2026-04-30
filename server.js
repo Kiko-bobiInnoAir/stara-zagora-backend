@@ -150,41 +150,36 @@ async function getTrip(vehicleId) {
 
     const now = Date.now()
 
+    // 🔥 ако вече имаме маршрут → връщаме го
     if (
         tripCache[vehicleId] &&
-        now - tripCache[vehicleId].time < TRIP_CACHE_TTL
+        now - tripCache[vehicleId].time < 5 * 60 * 1000
     ) {
         return tripCache[vehicleId].data
     }
 
-    if (
-        tripLastRequest[vehicleId] &&
-        now - tripLastRequest[vehicleId] < MIN_TRIP_INTERVAL
-    ) {
-        return tripCache[vehicleId]?.data || null
-    }
-
     try {
-        tripLastRequest[vehicleId] = now
-
         const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
 
         if (!res.ok) return tripCache[vehicleId]?.data || null
 
         const data = await res.json()
 
-        tripCache[vehicleId] = {
-            data,
-            time: now
+        // 🔥 запазваме САМО ако има маршрут
+        if (data?.trip?.shape && data.trip.shape.length > 10) {
+            tripCache[vehicleId] = {
+                data,
+                time: now
+            }
         }
 
-        return data
+        // 👉 ако няма shape → връщаме стария
+        return data?.trip?.shape ? data : tripCache[vehicleId]?.data || null
 
     } catch {
         return tripCache[vehicleId]?.data || null
     }
 }
-
 // =======================
 // API
 // =======================
