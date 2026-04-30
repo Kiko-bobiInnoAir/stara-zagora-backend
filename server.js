@@ -247,6 +247,19 @@ app.get("/liveTracking", async (req, res) => {
 
         let vehicleId = lockedVehicles[tripId]
 
+const lineId = arrivalData?.lineId || ""
+
+let arrivalData = null
+
+for (const stopId in arrivalsCache) {
+    for (const a of arrivalsCache[stopId]) {
+        if (a.tripId === tripId) {
+            arrivalData = a
+            break
+        }
+    }
+    if (arrivalData) break
+}
         // 🔒 LOCK
         if (!vehicleId) {
             for (const stopId in arrivalsCache) {
@@ -337,16 +350,18 @@ app.get("/liveTracking", async (req, res) => {
 
         lastKnownPositions[vehicleId].eta = eta
 
-      return res.json({
+     return res.json({
     vehicleId,
     lat,
     lon,
     eta,
     nextStop: tripData?.nextStop ?? null,
     delay: tripData?.delay ?? 0,
-    lineId: tripData?.trip?.lineId?.toString() || "",
-    stops: tripData?.trip?.stops || [],
-    shape: tripData?.trip?.shape || ""
+
+    // 🔥 НОВО
+    lineId,
+    stops: tripData?.trip?.stops ?? [],
+    shape: tripData?.trip?.shape ?? ""
 })
 
     } catch (e) {
