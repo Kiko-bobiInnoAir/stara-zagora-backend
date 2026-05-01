@@ -1,96 +1,78 @@
 const fs = require("fs")
 
+const BASE = "https://stara-zagora-backend.onrender.com"
 const API = "https://api.livetransport.eu/stara-zagora"
 
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
 
-function delay(ms) {
-    return new Promise(res => setTimeout(res, ms))
-}
-
 const routes = {}
 
-async function main() {
-
-    console.log("📡 Зареждам спирки...")
-
-    const stopsRes = await fetch(`${API}/data`)
-    const stopsData = await stopsRes.json()
-
-    const stops = stopsData.stops || []
-
-    console.log("🚏 Общо спирки:", stops.length)
-
-    const foundTrips = new Set()
-
-    // =======================
-    // 1. ВЗИМАМЕ ARRIVALS
-    // =======================
-    for (const stop of stops.slice(0, 80)) { // лимит за безопасност
-
-        try {
-            const res = await fetch(`${API}/virtual-board/${stop.id}?limit=10`)
-            const data = await res.json()
-
-            const deps = data.departures || []
-
-            for (const a of deps) {
-                if (a.tripId && a.vehicleId) {
-                    foundTrips.add(JSON.stringify({
-                        tripId: a.tripId,
-                        vehicleId: a.vehicleId,
-                        lineId: a.lineId
-                    }))
-                }
-            }
-
-        } catch {}
-
-        await delay(300) // пазим лимита
-    }
-
-    console.log("🧠 Намерени курсове:", foundTrips.size)
-
-    // =======================
-    // 2. ВЗИМАМЕ SHAPE
-    // =======================
-    for (const item of foundTrips) {
-
-        const { vehicleId, lineId } = JSON.parse(item)
-
-        if (routes[lineId]) continue // вече имаме
-
-        try {
-            const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
-
-            if (!res.ok) continue
-
-            const data = await res.json()
-
-            const shape = data?.trip?.shape
-
-            if (shape && shape.length > 50) {
-
-                routes[lineId] = shape
-
-                console.log(`✅ Линия ${lineId} добавена`)
-            }
-
-        } catch {}
-
-        await delay(500)
-    }
-
-    // =======================
-    // SAVE
-    // =======================
-    fs.writeFileSync(
-        "routes.json",
-        JSON.stringify(routes, null, 2)
-    )
-
-    console.log("💾 routes.json готов!")
+async function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms))
 }
 
-main()
+async function generate() {
+
+    console.log("🔄 Взимам vehicles от твоя backend...")
+
+    const res = await fetch(`${BASE}/vehicles`)
+
+    if (!res.ok) {
+        console.log("❌ Backend error")
+        return
+    }
+
+    const vehicles = await res.json()
+
+    if (!Array.isArray(vehicles)) {
+        console.log("❌ НЕ Е МАСИВ:", vehicles)
+        return
+    }
+
+    console.log("🚍 Намерени:", vehicles.length)
+
+    for (const v of vehicles) {
+
+        const vehicleId = v[0]
+
+        if (!vehicleId) continue
+
+        try {
+            const tripRes = await fetch(
+                `${API}/vehicle/${encodeURIComponent(vehicleId)}`
+            )
+
+            if (!tripRes.ok) continue
+
+            const data = await tripRes.json()
+            const trip = data?.trip
+
+            if (!trip || !trip.shape || trip.shape.length < 10) continue
+
+            const lineId = trip?.route?.shortName || ""
+
+            if (!lineId) continue
+
+            if (!routes[lineId]) {
+                routes[lineId] = {
+                    shape: trip.shape,
+                    stops: trip.stops || []
+                }
+
+                console.log("✅ Добавена линия:", lineId)
+            }
+
+            await sleep(150)
+
+        } catch (e) {
+            console.log("⚠️ грешка:", vehicleId)
+        }
+    }
+
+    fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
+
+    console.log("🎉 ГОТОВО! routes.json създаден")
+}
+
+generate()
