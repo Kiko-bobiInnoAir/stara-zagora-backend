@@ -138,7 +138,19 @@ function distance(lat1, lon1, lat2, lon2) {
 
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
+////
+async function getTripSafe(vehicleId) {
+    try {
+        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
+        if (!res.ok) return null
 
+        const data = await res.json()
+        return data || null
+
+    } catch {
+        return null
+    }
+}
 // =======================
 // API
 // =======================
@@ -178,7 +190,7 @@ app.get("/liveTracking", async (req, res) => {
         let vehicleId = lockedVehicles[tripId]
         let arrivalData = null
 
-        // намираме arrival
+        // 🔍 намираме arrival
         for (const stopId in arrivalsCache) {
             for (const a of arrivalsCache[stopId]) {
                 if (a.tripId === tripId) {
@@ -249,22 +261,36 @@ app.get("/liveTracking", async (req, res) => {
         }
 
         // =======================
-        // LINE
+        // TRIP + LINE
         // =======================
-        const lineId = arrivalData?.lineId || ""
+        const tripData = await getTripSafe(vehicleId)
+
+        const lineId =
+            tripData?.trip?.route?.shortName ||
+            arrivalData?.lineId ||
+            ""
 
         // =======================
-        // ROUTE (FIX)
+        // ROUTE (FIXED)
         // =======================
         let route = null
 
-        if (lineId && routes[lineId]) {
-            route = routes[lineId]
-        }
+        if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
+            route = {
+                shape: tripData.trip.shape,
+                stops: tripData.trip.stops || []
+            }
+        } else {
+            if (lineId && routes[lineId]) {
+                route = routes[lineId]
+            }
 
-        if (!route && lineId) {
-            const match = Object.keys(routes).find(k => k.endsWith(lineId))
-            if (match) route = routes[match]
+            if (!route && lineId) {
+                const match = Object.keys(routes).find(key =>
+                    key.endsWith(lineId)
+                )
+                if (match) route = routes[match]
+            }
         }
 
         // =======================
@@ -275,8 +301,8 @@ app.get("/liveTracking", async (req, res) => {
             lat,
             lon,
             eta,
-            nextStop: null,
-            delay: 0,
+            nextStop: tripData?.nextStop ?? null,
+            delay: tripData?.delay ?? 0,
             lineId,
             stops: route?.stops || [],
             shape: route?.shape || ""
@@ -287,7 +313,6 @@ app.get("/liveTracking", async (req, res) => {
         res.json({ error: "Internal error" })
     }
 })
-
 // =======================
 // START
 // =======================
