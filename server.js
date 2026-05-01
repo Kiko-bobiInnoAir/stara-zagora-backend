@@ -275,7 +275,26 @@ app.get("/liveTracking", async (req, res) => {
             eta = Math.round(60 / speed)
         }
 
-const tripData = await getTripSafe(vehicleId)
+let tripData = await getTripSafe(vehicleId)
+
+// 🔥 fallback ако няма trip
+if (!tripData) {
+    let arrivalData = null
+
+    for (const stopId in arrivalsCache) {
+        for (const a of arrivalsCache[stopId]) {
+            if (a.tripId === tripId) {
+                arrivalData = a
+                break
+            }
+        }
+        if (arrivalData) break
+    }
+
+    if (arrivalData?.vehicleId) {
+        tripData = await getTripSafe(arrivalData.vehicleId)
+    }
+}
 
        return res.json({
     vehicleId,
