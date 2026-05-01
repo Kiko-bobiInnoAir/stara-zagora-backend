@@ -3,7 +3,7 @@ const WebSocket = require("ws")
 const routes = require("./routes.json")
 const app = express()
 const PORT = process.env.PORT || 3000
-
+const routes = require("./routes.json")
 const API = "https://api.livetransport.eu/stara-zagora"
 const WS_URL = "wss://api.livetransport.eu/stara-zagora"
 
@@ -300,40 +300,47 @@ app.get("/liveTracking", async (req, res) => {
         // =======================
         const lineId = arrivalData?.lineId || ""
 
-       let route = null
+      // =======================
+// ROUTE FALLBACK (ВАЖНО)
+// =======================
+let route = null
 
-if (lineId) {
-    route = routes[lineId]
+if (tripData?.trip?.shape) {
+    route = {
+        shape: tripData.trip.shape,
+        stops: tripData.trip.stops || []
+    }
+} else {
+    // 🔥 fallback към routes.json
+    if (lineId && routes[lineId]) {
+        route = routes[lineId]
+    }
 
-    // 🔥 fallback – търси по включване (13 съдържа 3)
-    if (!route) {
+    // 🔥 fallback 2 (ако е "3" вместо "13")
+    if (!route && lineId) {
         const match = Object.keys(routes).find(key =>
             key.endsWith(lineId)
         )
-        if (match) {
-            route = routes[match]
-        }
+        if (match) route = routes[match]
     }
 }
 
-        return res.json({
-            vehicleId,
-            lat,
-            lon,
-            eta,
+// =======================
+// FINAL RESPONSE
+// =======================
+return res.json({
+    vehicleId,
+    lat,
+    lon,
+    eta,
+    nextStop: tripData?.nextStop ?? null,
+    delay: tripData?.delay ?? 0,
 
-            nextStop: null,
-            delay: 0,
+    lineId: lineId || "",
 
-            lineId,
-            stops: route?.stops || [],
-            shape: route?.shape || ""
-        })
-
-    } catch (e) {
-        console.log("Live error:", e)
-        return res.json({ error: "Internal error" })
-    }
+    // 🔥 ТУК Е FIX-ЪТ
+    stops: route?.stops || [],
+    shape: route?.shape || ""
 })
 
 // =======================
