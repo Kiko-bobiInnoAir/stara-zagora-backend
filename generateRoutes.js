@@ -1,6 +1,6 @@
 const fs = require("fs")
 
-const BASE = "https://api.livetransport.eu/stara-zagora"
+const API = "https://api.livetransport.eu/stara-zagora"
 
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
@@ -13,47 +13,43 @@ async function sleep(ms) {
 
 async function generate() {
 
-    console.log("🔄 Взимам всички линии...")
+    console.log("🔄 Взимам превозни средства...")
 
-    const res = await fetch(`${BASE}/data`)
+    // взимаме GPS feed (същото като WebSocket)
+    const res = await fetch(API)
     const data = await res.json()
 
-    const lines = data.lines || []
+    if (!data.lines) {
+        console.log("❌ няма lines")
+        return
+    }
 
-    console.log("🚌 Линии намерени:", lines.length)
+    console.log("🚍 линии:", data.lines.length)
 
-    for (const line of lines) {
+    // 🔥 обхождаме линии
+    for (const line of data.lines) {
 
-        const lineId = line.id
+        const lineName = line.name // това е реалния номер (8, 13...)
 
         try {
-            const res = await fetch(`${BASE}/line/${lineId}`)
-            if (!res.ok) continue
+            console.log("🔍 търся за линия:", lineName)
 
-            const data = await res.json()
-
-            const shape = data?.shape
-            const stops = data?.stops
-
-            if (!shape || shape.length < 10) continue
-
-            routes[line.name] = {
-                shape,
-                stops: stops || []
+            // тук няма директен trip API, затова ще ги хванем runtime
+            routes[lineName] = {
+                shape: "",
+                stops: []
             }
 
-            console.log("✅ линия:", line.name)
-
-            await sleep(200)
-
         } catch (e) {
-            console.log("⚠️ грешка:", lineId)
+            console.log("⚠️ грешка:", lineName)
         }
+
+        await sleep(100)
     }
 
     fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
 
-    console.log("🎉 ВСИЧКИ ЛИНИИ ГОТОВИ!")
+    console.log("🎉 ГОТОВО (празна структура)")
 }
 
 generate()

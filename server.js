@@ -265,6 +265,25 @@ app.get("/liveTracking", async (req, res) => {
         // =======================
         const tripData = await getTripSafe(vehicleId)
 
+if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
+
+    const lineKey =
+        tripData?.trip?.route?.shortName ||
+        tripData?.trip?.route?.name
+
+    if (lineKey && !routes[lineKey]) {
+
+        routes[lineKey] = {
+            shape: tripData.trip.shape,
+            stops: tripData.trip.stops || []
+        }
+
+        console.log("💾 записвам линия:", lineKey)
+
+        fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
+    }
+}
+
         const lineId =
             tripData?.trip?.route?.shortName ||
             arrivalData?.lineId ||
