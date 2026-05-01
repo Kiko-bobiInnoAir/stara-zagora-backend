@@ -1,13 +1,12 @@
 const express = require("express")
 const WebSocket = require("ws")
 const routes = require("./routes.json")
+
 const app = express()
 const PORT = process.env.PORT || 3000
-const routes = require("./routes.json")
+
 const API = "https://api.livetransport.eu/stara-zagora"
 const WS_URL = "wss://api.livetransport.eu/stara-zagora"
-
-const tripToVehicleCache = {}
 
 let stopsCache = []
 let arrivalsCache = {}
@@ -57,16 +56,7 @@ async function processQueue() {
 
             if (res.ok) {
                 const data = await res.json()
-
-                const deps = data.departures || []
-                arrivalsCache[stopId] = deps
-
-                // 🔥 ВАЖНО: пълним cache
-                for (const a of deps) {
-                    if (a.tripId && a.vehicleId) {
-                        tripToVehicleCache[a.tripId] = a.vehicleId
-                    }
-                }
+                arrivalsCache[stopId] = data.departures || []
             }
 
         } catch {}
@@ -149,43 +139,6 @@ function distance(lat1, lon1, lat2, lon2) {
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-function getRouteByLine(lineId) {
-    return routes[lineId] || null
-}
-
-// =======================
-// TRIP CACHE
-// =======================
-const tripCache = {}
-const TRIP_TTL = 60 * 1000
-
-async function getTripSafe(vehicleId) {
-    const now = Date.now()
-
-    if (tripCache[vehicleId] && now - tripCache[vehicleId].time < TRIP_TTL) {
-        return tripCache[vehicleId].data
-    }
-
-    try {
-        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
-        if (!res.ok) return null
-
-        const data = await res.json()
-
-        if (data?.trip) {
-            tripCache[vehicleId] = {
-                data,
-                time: now
-            }
-            return data
-        }
-
-        return null
-    } catch {
-        return null
-    }
-}
-
 // =======================
 // API
 // =======================
@@ -210,7 +163,7 @@ app.get("/vehicles", (req, res) => {
 })
 
 // =======================
-// LIVE TRACKING
+// LIVE TRACKING (FIXED)
 // =======================
 app.get("/liveTracking", async (req, res) => {
 
@@ -225,7 +178,7 @@ app.get("/liveTracking", async (req, res) => {
         let vehicleId = lockedVehicles[tripId]
         let arrivalData = null
 
-        // 🔍 намираме arrival
+        // намираме arrival
         for (const stopId in arrivalsCache) {
             for (const a of arrivalsCache[stopId]) {
                 if (a.tripId === tripId) {
@@ -274,7 +227,7 @@ app.get("/liveTracking", async (req, res) => {
         }
 
         // =======================
-        // ETA (simple)
+        // ETA
         // =======================
         const now = Date.now()
         let speed = 0
@@ -296,51 +249,43 @@ app.get("/liveTracking", async (req, res) => {
         }
 
         // =======================
-        // LINE + ROUTE (SAFE)
+        // LINE
         // =======================
         const lineId = arrivalData?.lineId || ""
 
-      // =======================
-// ROUTE FALLBACK (ВАЖНО)
-// =======================
-let route = null
+        // =======================
+        // ROUTE (FIX)
+        // =======================
+        let route = null
 
-if (tripData?.trip?.shape) {
-    route = {
-        shape: tripData.trip.shape,
-        stops: tripData.trip.stops || []
+        if (lineId && routes[lineId]) {
+            route = routes[lineId]
+        }
+
+        if (!route && lineId) {
+            const match = Object.keys(routes).find(k => k.endsWith(lineId))
+            if (match) route = routes[match]
+        }
+
+        // =======================
+        // RESPONSE
+        // =======================
+        return res.json({
+            vehicleId,
+            lat,
+            lon,
+            eta,
+            nextStop: null,
+            delay: 0,
+            lineId,
+            stops: route?.stops || [],
+            shape: route?.shape || ""
+        })
+
+    } catch (e) {
+        console.log("Live error:", e.message)
+        res.json({ error: "Internal error" })
     }
-} else {
-    // 🔥 fallback към routes.json
-    if (lineId && routes[lineId]) {
-        route = routes[lineId]
-    }
-
-    // 🔥 fallback 2 (ако е "3" вместо "13")
-    if (!route && lineId) {
-        const match = Object.keys(routes).find(key =>
-            key.endsWith(lineId)
-        )
-        if (match) route = routes[match]
-    }
-}
-
-// =======================
-// FINAL RESPONSE
-// =======================
-return res.json({
-    vehicleId,
-    lat,
-    lon,
-    eta,
-    nextStop: tripData?.nextStop ?? null,
-    delay: tripData?.delay ?? 0,
-
-    lineId: lineId || "",
-
-    // 🔥 ТУК Е FIX-ЪТ
-    stops: route?.stops || [],
-    shape: route?.shape || ""
 })
 
 // =======================
