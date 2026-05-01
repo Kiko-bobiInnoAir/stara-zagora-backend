@@ -271,37 +271,65 @@ app.get("/liveTracking", async (req, res) => {
             ""
 
         // =======================
-        // ROUTE (FIXED)
-        // =======================
-        let route = null
+       // =======================
+// ROUTE (УЛТРА FIX)
+// =======================
+let route = null
 
-        if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
-            route = {
-                shape: tripData.trip.shape,
-                stops: tripData.trip.stops || []
-            }
-        } else {
-            if (lineId && routes[lineId]) {
-                route = routes[lineId]
-            }
+// 1. Първо пробваме от routes.json (най-надеждно)
+if (lineId && routes[lineId]) {
+    route = routes[lineId]
+}
 
-            if (!route && lineId) {
-                const match = Object.keys(routes).find(key =>
-                    key.endsWith(lineId)
-                )
-                if (match) route = routes[match]
-            }
-        }
+// 2. fallback ако има разминаване (пример: 13 vs 1)
+if (!route && lineId) {
+    const match = Object.keys(routes).find(k =>
+        k.endsWith(lineId)
+    )
+    if (match) route = routes[match]
+}
 
+// 3. чак накрая пробваме от API
+if (!route && tripData?.trip?.shape) {
+    route = {
+        shape: tripData.trip.shape,
+        stops: tripData.trip.stops || []
+    }
+}
         // =======================
         // RESPONSE
         // =======================
+
+let nextStop = null
+
+if (route?.stops?.length && lat && lon) {
+
+    let minDist = Infinity
+
+    for (const stop of route.stops) {
+
+        if (!stop?.geo) continue
+
+        const d = distance(
+            lat,
+            lon,
+            stop.geo.lat,
+            stop.geo.lon
+        )
+
+        if (d < minDist) {
+            minDist = d
+            nextStop = stop
+        }
+    }
+}
+
         return res.json({
             vehicleId,
             lat,
             lon,
             eta,
-            nextStop: tripData?.nextStop ?? null,
+           nextStop: nextStop?.name?.bg || nextStop?.name || null,
             delay: tripData?.delay ?? 0,
             lineId,
             stops: route?.stops || [],

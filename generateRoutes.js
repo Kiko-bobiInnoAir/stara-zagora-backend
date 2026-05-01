@@ -1,7 +1,6 @@
 const fs = require("fs")
 
-const BASE = "https://stara-zagora-backend.onrender.com"
-const API = "https://api.livetransport.eu/stara-zagora"
+const BASE = "https://api.livetransport.eu/stara-zagora"
 
 const fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args))
@@ -14,65 +13,47 @@ async function sleep(ms) {
 
 async function generate() {
 
-    console.log("🔄 Взимам vehicles от твоя backend...")
+    console.log("🔄 Взимам всички линии...")
 
-    const res = await fetch(`${BASE}/vehicles`)
+    const res = await fetch(`${BASE}/data`)
+    const data = await res.json()
 
-    if (!res.ok) {
-        console.log("❌ Backend error")
-        return
-    }
+    const lines = data.lines || []
 
-    const vehicles = await res.json()
+    console.log("🚌 Линии намерени:", lines.length)
 
-    if (!Array.isArray(vehicles)) {
-        console.log("❌ НЕ Е МАСИВ:", vehicles)
-        return
-    }
+    for (const line of lines) {
 
-    console.log("🚍 Намерени:", vehicles.length)
-
-    for (const v of vehicles) {
-
-        const vehicleId = v[0]
-
-        if (!vehicleId) continue
+        const lineId = line.id
 
         try {
-            const tripRes = await fetch(
-                `${API}/vehicle/${encodeURIComponent(vehicleId)}`
-            )
+            const res = await fetch(`${BASE}/line/${lineId}`)
+            if (!res.ok) continue
 
-            if (!tripRes.ok) continue
+            const data = await res.json()
 
-            const data = await tripRes.json()
-            const trip = data?.trip
+            const shape = data?.shape
+            const stops = data?.stops
 
-            if (!trip || !trip.shape || trip.shape.length < 10) continue
+            if (!shape || shape.length < 10) continue
 
-            const lineId = trip?.route?.shortName || ""
-
-            if (!lineId) continue
-
-            if (!routes[lineId]) {
-                routes[lineId] = {
-                    shape: trip.shape,
-                    stops: trip.stops || []
-                }
-
-                console.log("✅ Добавена линия:", lineId)
+            routes[line.name] = {
+                shape,
+                stops: stops || []
             }
 
-            await sleep(150)
+            console.log("✅ линия:", line.name)
+
+            await sleep(200)
 
         } catch (e) {
-            console.log("⚠️ грешка:", vehicleId)
+            console.log("⚠️ грешка:", lineId)
         }
     }
 
     fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
 
-    console.log("🎉 ГОТОВО! routes.json създаден")
+    console.log("🎉 ВСИЧКИ ЛИНИИ ГОТОВИ!")
 }
 
 generate()
