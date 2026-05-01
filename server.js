@@ -222,32 +222,33 @@ app.get("/liveTracking", async (req, res) => {
 
     try {
 
-        // 🔥 първо от cache
-        let vehicleId =
-            lockedVehicles[tripId] ||
-            tripToVehicleCache[tripId]
+        let vehicleId = lockedVehicles[tripId]
+        let arrivalData = null
 
-        // 🔒 fallback (ако няма)
-        if (!vehicleId) {
-            for (const stopId in arrivalsCache) {
-                for (const a of arrivalsCache[stopId]) {
-                    if (a.tripId === tripId && a.vehicleId) {
+        // 🔍 намираме arrival
+        for (const stopId in arrivalsCache) {
+            for (const a of arrivalsCache[stopId]) {
+                if (a.tripId === tripId) {
+                    arrivalData = a
+
+                    if (!vehicleId && a.vehicleId) {
                         vehicleId = a.vehicleId
                         lockedVehicles[tripId] = vehicleId
-                        break
                     }
+
+                    break
                 }
-                if (vehicleId) break
             }
+            if (arrivalData) break
         }
 
         if (!vehicleId) {
             return res.json({ error: "Vehicle not found yet" })
         }
 
-        // ===================
+        // =======================
         // GPS
-        // ===================
+        // =======================
         const clean = vehicleId.split("/").pop()
 
         const vehicle = vehiclesCache.find(v =>
@@ -256,23 +257,25 @@ app.get("/liveTracking", async (req, res) => {
 
         let lat, lon
 
-        if (vehicle) {
-            const coords = vehicle[6] || [0, 0]
-            lat = coords[0]
-            lon = coords[1]
+        if (vehicle && vehicle[6]) {
+            lat = vehicle[6][0]
+            lon = vehicle[6][1]
+
             lastKnownPositions[vehicleId] = { lat, lon }
         } else {
             const last = lastKnownPositions[vehicleId]
+
             if (!last) {
                 return res.json({ error: "Vehicle position not found" })
             }
+
             lat = last.lat
             lon = last.lon
         }
 
-        // ===================
-        // ETA (прост)
-        // ===================
+        // =======================
+        // ETA (simple)
+        // =======================
         const now = Date.now()
         let speed = 0
 
@@ -292,41 +295,33 @@ app.get("/liveTracking", async (req, res) => {
             eta = Math.round(60 / speed)
         }
 
-        // ===================
-        // TRIP
-        // ===================
-        const tripData = await getTripSafe(vehicleId)
+        // =======================
+        // LINE + ROUTE (SAFE)
+        // =======================
+        const lineId = arrivalData?.lineId || ""
 
-    
+        let route = null
+        if (lineId && routes[lineId]) {
+            route = routes[lineId]
+        }
 
-const lineId =
-    tripData?.trip?.route?.shortName ||
-    arrivalData?.lineId ||
-    ""
+        return res.json({
+            vehicleId,
+            lat,
+            lon,
+            eta,
 
-const route = lineId ? getRouteByLine(lineId) : null
+            nextStop: null,
+            delay: 0,
 
-if (!lat || !lon) {
-    return res.json({ error: "Vehicle position not found" })
-}
-
-return res.json({
-    vehicleId,
-    lat,
-    lon,
-    eta,
-    nextStop: tripData?.nextStop ?? null,
-    delay: tripData?.delay ?? 0,
-
-    lineId: lineId || "",
-
-    stops: route?.stops || [],
-    shape: route?.shape || ""
-})
+            lineId,
+            stops: route?.stops || [],
+            shape: route?.shape || ""
+        })
 
     } catch (e) {
-        console.log("Live error:", e.message)
-        res.json({ error: "Internal error" })
+        console.log("Live error:", e)
+        return res.json({ error: "Internal error" })
     }
 })
 
