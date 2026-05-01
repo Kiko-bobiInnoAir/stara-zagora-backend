@@ -242,20 +242,20 @@ app.get("/liveTracking", async (req, res) => {
 
         let vehicleId = lockedVehicles[tripId]
 
-const lineId = arrivalData?.lineId || ""
+        // 🔍 намираме arrival данни (за lineId)
+        let arrivalData = null
 
-let arrivalData = null
-
-for (const stopId in arrivalsCache) {
-    for (const a of arrivalsCache[stopId]) {
-        if (a.tripId === tripId) {
-            arrivalData = a
-            break
+        for (const stopId in arrivalsCache) {
+            for (const a of arrivalsCache[stopId]) {
+                if (a.tripId === tripId) {
+                    arrivalData = a
+                    break
+                }
+            }
+            if (arrivalData) break
         }
-    }
-    if (arrivalData) break
-}
-        // 🔒 LOCK
+
+        // 🔒 LOCK vehicle
         if (!vehicleId) {
             for (const stopId in arrivalsCache) {
                 for (const a of arrivalsCache[stopId]) {
@@ -273,6 +273,84 @@ for (const stopId in arrivalsCache) {
             return res.json({ error: "Vehicle not found yet" })
         }
 
+        // =======================
+        // GPS от WebSocket
+        // =======================
+        const clean = vehicleId.split("/").pop()
+
+        const vehicle = vehiclesCache.find(v =>
+            (v[0] || "").split("/").pop() === clean
+        )
+
+        let lat, lon
+
+        if (vehicle) {
+            const coords = vehicle[6] || [0, 0]
+
+            lat = coords[0]
+            lon = coords[1]
+
+            lastKnownPositions[vehicleId] = { lat, lon }
+
+        } else {
+
+            const last = lastKnownPositions[vehicleId]
+
+            if (!last) {
+                return res.json({ error: "Vehicle position not found" })
+            }
+
+            lat = last.lat
+            lon = last.lon
+        }
+
+        // =======================
+        // ETA (прост, стабилен)
+        // =======================
+        const now = Date.now()
+        let speed = 0
+
+        if (speedCache[vehicleId]) {
+            const prev = speedCache[vehicleId]
+
+            const dist = distance(prev.lat, prev.lon, lat, lon)
+            const time = (now - prev.time) / 1000
+
+            speed = time > 0 ? dist / time : 0
+        }
+
+        speedCache[vehicleId] = {
+            lat,
+            lon,
+            time: now
+        }
+
+        let eta = null
+
+        if (speed > 1) {
+            eta = Math.round(60 / speed)
+        }
+
+        // =======================
+        // LINE ID (от arrivals)
+        // =======================
+        const lineId = arrivalData?.lineId || ""
+
+        return res.json({
+            vehicleId,
+            lat,
+            lon,
+            eta,
+            nextStop: null,
+            delay: 0,
+            lineId
+        })
+
+    } catch (e) {
+        console.log("Live error:", e.message)
+        res.json({ error: "Internal error" })
+    }
+})
         // =======================
         // GPS
         // =======================
