@@ -1,6 +1,6 @@
 const express = require("express")
 const WebSocket = require("ws")
-
+const routes = require("./routes.json")
 const app = express()
 const PORT = process.env.PORT || 3000
 
@@ -149,6 +149,10 @@ function distance(lat1, lon1, lat2, lon2) {
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+function getRouteByLine(lineId) {
+    return routes[lineId] || null
+}
+
 // =======================
 // TRIP CACHE
 // =======================
@@ -293,17 +297,27 @@ app.get("/liveTracking", async (req, res) => {
         // ===================
         const tripData = await getTripSafe(vehicleId)
 
-        return res.json({
-            vehicleId,
-            lat,
-            lon,
-            eta,
-            nextStop: tripData?.nextStop ?? null,
-            delay: tripData?.delay ?? 0,
-            lineId: tripData?.trip?.route?.shortName || "",
-            stops: tripData?.trip?.stops || [],
-            shape: tripData?.trip?.shape || ""
-        })
+    
+
+const lineId =
+    tripData?.trip?.route?.shortName ||
+    arrivalData?.lineId ||
+    ""
+
+const route = getRouteByLine(lineId)
+
+return res.json({
+    vehicleId,
+    lat,
+    lon,
+    eta,
+    nextStop: tripData?.nextStop ?? null,
+    delay: tripData?.delay ?? 0,
+
+    lineId,
+    stops: route?.stops || [],
+    shape: route?.shape || ""
+})
 
     } catch (e) {
         console.log("Live error:", e.message)
