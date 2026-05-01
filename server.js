@@ -138,6 +138,39 @@ function distance(lat1, lon1, lat2, lon2) {
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+
+
+
+/////////
+const tripCache = {}
+const TRIP_TTL = 60 * 1000 // 1 минута
+
+async function getTripSafe(vehicleId) {
+    const now = Date.now()
+
+    if (tripCache[vehicleId] && now - tripCache[vehicleId].time < TRIP_TTL) {
+        return tripCache[vehicleId].data
+    }
+
+    try {
+        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
+        if (!res.ok) return null
+
+        const data = await res.json()
+
+        if (data?.trip) {
+            tripCache[vehicleId] = {
+                data,
+                time: now
+            }
+            return data
+        }
+
+        return null
+    } catch {
+        return null
+    }
+}
 // =======================
 // API
 // =======================
@@ -242,15 +275,21 @@ app.get("/liveTracking", async (req, res) => {
             eta = Math.round(60 / speed)
         }
 
-        return res.json({
-            vehicleId,
-            lat,
-            lon,
-            eta,
-            nextStop: null,
-            delay: 0
-        })
+const tripData = await getTripSafe(vehicleId)
 
+       return res.json({
+    vehicleId,
+    lat,
+    lon,
+    eta,
+    nextStop: tripData?.nextStop ?? null,
+    delay: tripData?.delay ?? 0,
+
+    // 🔥 новите неща (няма да чупят нищо)
+    lineId: tripData?.trip?.route?.shortName || "",
+    stops: tripData?.trip?.stops || [],
+    shape: tripData?.trip?.shape || ""
+})
     } catch (e) {
         console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
