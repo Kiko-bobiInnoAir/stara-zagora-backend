@@ -1,6 +1,7 @@
 const express = require("express")
 const WebSocket = require("ws")
 const routes = require("./routes.json")
+const fs = require("fs")
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -43,7 +44,6 @@ async function processQueue() {
     isProcessing = true
 
     while (true) {
-
         if (!requestQueue.length) {
             await delay(200)
             continue
@@ -138,7 +138,7 @@ function distance(lat1, lon1, lat2, lon2) {
 
     return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
-////
+
 async function getTripSafe(vehicleId) {
     try {
         const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
@@ -151,6 +151,7 @@ async function getTripSafe(vehicleId) {
         return null
     }
 }
+
 // =======================
 // API
 // =======================
@@ -190,7 +191,6 @@ app.get("/liveTracking", async (req, res) => {
         let vehicleId = lockedVehicles[tripId]
         let arrivalData = null
 
-        // 🔍 намираме arrival
         for (const stopId in arrivalsCache) {
             for (const a of arrivalsCache[stopId]) {
                 if (a.tripId === tripId) {
@@ -211,9 +211,7 @@ app.get("/liveTracking", async (req, res) => {
             return res.json({ error: "Vehicle not found yet" })
         }
 
-        // =======================
         // GPS
-        // =======================
         const clean = vehicleId.split("/").pop()
 
         const vehicle = vehiclesCache.find(v =>
@@ -225,7 +223,6 @@ app.get("/liveTracking", async (req, res) => {
         if (vehicle && vehicle[6]) {
             lat = vehicle[6][0]
             lon = vehicle[6][1]
-
             lastKnownPositions[vehicleId] = { lat, lon }
         } else {
             const last = lastKnownPositions[vehicleId]
@@ -238,9 +235,7 @@ app.get("/liveTracking", async (req, res) => {
             lon = last.lon
         }
 
-        // =======================
         // ETA
-        // =======================
         const now = Date.now()
         let speed = 0
 
@@ -260,52 +255,8 @@ app.get("/liveTracking", async (req, res) => {
             eta = Math.round(60 / speed)
         }
 
-        // =======================
-        // TRIP + LINE
-        // =======================
+        // TRIP
         const tripData = await getTripSafe(vehicleId)
-
-// =======================
-// AUTO SAVE ROUTES 🔥
-// =======================
-if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
-
-    const lineKey =
-        tripData?.trip?.route?.shortName ||
-        tripData?.trip?.route?.name
-
-    if (lineKey && !routes[lineKey]) {
-
-        routes[lineKey] = {
-            shape: tripData.trip.shape,
-            stops: tripData.trip.stops || []
-        }
-
-        console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineKey)
-
-        const fs = require("fs")
-        fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
-    }
-}
-
-if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
-
-    const lineKey =
-        tripData?.trip?.route?.shortName ||
-        tripData?.trip?.route?.name
-
-    if (lineKey && !routes[lineKey]) {
-
-        routes[lineKey] = {
-            shape: tripData.trip.shape,
-            stops: tripData.trip.stops || []
-        }
-
-        console.log("💾 записвам линия:", lineKey)
-
-        fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
-    }
-}
 
         const lineId =
             tripData?.trip?.route?.shortName ||
@@ -313,65 +264,88 @@ if (tripData?.trip?.shape && tripData.trip.shape.length > 10) {
             ""
 
         // =======================
-       // =======================
-// ROUTE (УЛТРА FIX)
-// =======================
-let route = null
-
-// 1. Първо пробваме от routes.json (най-надеждно)
-if (lineId && routes[lineId]) {
-    route = routes[lineId]
-}
-
-// 2. fallback ако има разминаване (пример: 13 vs 1)
-if (!route && lineId) {
-    const match = Object.keys(routes).find(k =>
-        k.endsWith(lineId)
-    )
-    if (match) route = routes[match]
-}
-
-// 3. чак накрая пробваме от API
-if (!route && tripData?.trip?.shape) {
-    route = {
-        shape: tripData.trip.shape,
-        stops: tripData.trip.stops || []
-    }
-}
+        // AUTO SAVE ROUTES
         // =======================
-        // RESPONSE
-        // =======================
+        if (tripData?.trip) {
 
-let nextStop = null
+            const lineKey =
+                tripData?.trip?.route?.shortName ||
+                tripData?.trip?.route?.name
 
-if (route?.stops?.length && lat && lon) {
+            if (lineKey && !routes[lineKey]) {
 
-    let minDist = Infinity
+                routes[lineKey] = {
+                    shape: tripData.trip.shape || "",
+                    stops: (tripData.trip.stops || []).map(s => ({
+                        name: s.name,
+                        geo: {
+                            latitude: s.geo?.latitude,
+                            longitude: s.geo?.longitude
+                        }
+                    }))
+                }
 
-    for (const stop of route.stops) {
+                console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineKey)
 
-        if (!stop?.geo) continue
-
-        const d = distance(
-            lat,
-            lon,
-            stop.geo.lat,
-            stop.geo.lon
-        )
-
-        if (d < minDist) {
-            minDist = d
-            nextStop = stop
+                fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
+            }
         }
-    }
-}
 
+        // =======================
+        // ROUTE
+        // =======================
+        let route = null
+
+        if (lineId && routes[lineId]) {
+            route = routes[lineId]
+        }
+
+        if (!route && lineId) {
+            const match = Object.keys(routes).find(k =>
+                k.endsWith(lineId)
+            )
+            if (match) route = routes[match]
+        }
+
+        if (!route && tripData?.trip?.shape) {
+            route = {
+                shape: tripData.trip.shape,
+                stops: tripData.trip.stops || []
+            }
+        }
+
+        // =======================
+        // NEXT STOP
+        // =======================
+        let nextStop = null
+
+        if (route?.stops?.length && lat && lon) {
+
+            for (const stop of route.stops) {
+
+                if (!stop?.geo) continue
+
+                const d = distance(
+                    lat,
+                    lon,
+                    stop.geo.latitude,
+                    stop.geo.longitude
+                )
+
+                if (d < 300) {
+                    nextStop = stop
+                    break
+                }
+            }
+        }
+
+        // RESPONSE
         return res.json({
             vehicleId,
             lat,
             lon,
             eta,
-           nextStop: nextStop?.name?.bg || nextStop?.name || null,
+            nextStop: nextStop?.name?.bg || nextStop?.name || null,
             delay: tripData?.delay ?? 0,
             lineId,
             stops: route?.stops || [],
@@ -383,6 +357,7 @@ if (route?.stops?.length && lat && lon) {
         res.json({ error: "Internal error" })
     }
 })
+
 // =======================
 // START
 // =======================
