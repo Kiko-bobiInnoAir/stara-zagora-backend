@@ -300,10 +300,21 @@ app.get("/liveTracking", async (req, res) => {
         // =======================
         const lineId = arrivalData?.lineId || ""
 
-        let route = null
-        if (lineId && routes[lineId]) {
-            route = routes[lineId]
+       let route = null
+
+if (lineId) {
+    route = routes[lineId]
+
+    // 🔥 fallback – търси по включване (13 съдържа 3)
+    if (!route) {
+        const match = Object.keys(routes).find(key =>
+            key.endsWith(lineId)
+        )
+        if (match) {
+            route = routes[match]
         }
+    }
+}
 
         return res.json({
             vehicleId,
