@@ -11,6 +11,7 @@ const WS_URL = "wss://api.livetransport.eu/stara-zagora"
 
 let stopsCache = []
 let stopsById = {}
+let linesById = {}
 let arrivalsCache = {}
 let vehiclesCache = []
 
@@ -22,30 +23,39 @@ const lastKnownPositions = {}
 const speedCache = {}
 
 const fetch = (...args) =>
-    import("node-fetch").then(({ default: fetch }) => fetch(...args))
+import("node-fetch").then(({ default: fetch }) => fetch(...args))
 
 function delay(ms) {
-    return new Promise(res => setTimeout(res, ms))
+return new Promise(res => setTimeout(res, ms))
 }
 
 // =======================
-// LOAD STOPS
+// LOAD STOPS + LINES
 // =======================
 async function loadStops() {
-    try {
-        const res = await fetch(`${API}/data`)
-        const data = await res.json()
+try {
+const res = await fetch(`${API}/data`)
+const data = await res.json()
 
-        stopsCache = data.stops || []
+```
+    stopsCache = data.stops || []
 
-        stopsById = {}
-        for (const s of stopsCache) {
-            stopsById[s.id] = s
-        }
-
-    } catch (e) {
-        console.log("Stops error")
+    stopsById = {}
+    for (const s of stopsCache) {
+        stopsById[s.id] = s
     }
+
+    // 🔥 FIX за линии
+    linesById = {}
+    for (const l of data.lines || []) {
+        linesById[l.id] = l
+    }
+
+} catch (e) {
+    console.log("Stops error")
+}
+```
+
 }
 
 // =======================
@@ -55,34 +65,37 @@ const requestQueue = []
 let isProcessing = false
 
 function enqueue(stopId) {
-    if (!requestQueue.includes(stopId)) {
-        requestQueue.push(stopId)
-    }
+if (!requestQueue.includes(stopId)) {
+requestQueue.push(stopId)
+}
 }
 
 async function processQueue() {
-    if (isProcessing) return
-    isProcessing = true
+if (isProcessing) return
+isProcessing = true
 
-    while (true) {
+```
+while (true) {
 
-        if (!requestQueue.length) {
-            await delay(200)
-            continue
-        }
-
-        const stopId = requestQueue.shift()
-
-        try {
-            const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
-            if (res.ok) {
-                const data = await res.json()
-                arrivalsCache[stopId] = data.departures || []
-            }
-        } catch {}
-
-        await delay(350)
+    if (!requestQueue.length) {
+        await delay(200)
+        continue
     }
+
+    const stopId = requestQueue.shift()
+
+    try {
+        const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
+        if (res.ok) {
+            const data = await res.json()
+            arrivalsCache[stopId] = data.departures || []
+        }
+    } catch {}
+
+    await delay(350)
+}
+```
+
 }
 
 // =======================
@@ -92,265 +105,285 @@ let currentIndex = 0
 const BATCH_SIZE = 10
 
 async function loadArrivals() {
-    if (!stopsCache.length) return
+if (!stopsCache.length) return
 
-    const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
+```
+const batch = stopsCache.slice(currentIndex, currentIndex + BATCH_SIZE)
 
-    for (const stop of batch) enqueue(stop.id)
+for (const stop of batch) enqueue(stop.id)
 
-    currentIndex += BATCH_SIZE
-    if (currentIndex >= stopsCache.length) currentIndex = 0
+currentIndex += BATCH_SIZE
+if (currentIndex >= stopsCache.length) currentIndex = 0
+```
+
 }
 
 // =======================
 // WS GPS
 // =======================
 function connectWS() {
-    if (isWSConnected) return
+if (isWSConnected) return
 
-    ws = new WebSocket(WS_URL)
+```
+ws = new WebSocket(WS_URL)
 
-    ws.on("open", () => {
-        isWSConnected = true
-    })
+ws.on("open", () => {
+    isWSConnected = true
+})
 
-    ws.on("message", (msg) => {
-        try {
-            vehiclesCache = JSON.parse(msg)
-        } catch {}
-    })
+ws.on("message", (msg) => {
+    try {
+        vehiclesCache = JSON.parse(msg)
+    } catch {}
+})
 
-    ws.on("close", () => {
-        isWSConnected = false
-        setTimeout(connectWS, 3000)
-    })
+ws.on("close", () => {
+    isWSConnected = false
+    setTimeout(connectWS, 3000)
+})
 
-    ws.on("error", () => {
-        isWSConnected = false
-        ws.close()
-    })
+ws.on("error", () => {
+    isWSConnected = false
+    ws.close()
+})
+```
+
 }
 
 // =======================
 // HELPERS
 // =======================
 function distance(lat1, lon1, lat2, lon2) {
-    const R = 6371000
-    const dLat = (lat2 - lat1) * Math.PI / 180
-    const dLon = (lon2 - lon1) * Math.PI / 180
+const R = 6371000
+const dLat = (lat2 - lat1) * Math.PI / 180
+const dLon = (lon2 - lon1) * Math.PI / 180
 
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1 * Math.PI / 180) *
-        Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) ** 2
+```
+const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2
 
-    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+```
+
 }
 
 async function getTripSafe(vehicleId) {
-    try {
-        const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
-        if (!res.ok) return null
+try {
+const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
+if (!res.ok) return null
 
-        const data = await res.json()
-        return data || null
+```
+    const data = await res.json()
+    return data || null
 
-    } catch {
-        return null
-    }
+} catch {
+    return null
+}
+```
+
 }
 
 // =======================
 // API
 // =======================
 app.get("/", (req, res) => {
-    res.send("Backend running")
+res.send("Backend running")
 })
 
 app.get("/stops", (req, res) => {
-    res.json(stopsCache)
+res.json(stopsCache)
 })
 
 app.get("/arrivals/:stopId", (req, res) => {
-    const stopId = req.params.stopId
+const stopId = req.params.stopId
 
-    if (!arrivalsCache[stopId]) enqueue(stopId)
+```
+if (!arrivalsCache[stopId]) enqueue(stopId)
 
-    res.json(arrivalsCache[stopId] || [])
+res.json(arrivalsCache[stopId] || [])
+```
+
 })
 
 app.get("/vehicles", (req, res) => {
-    res.json(vehiclesCache)
+res.json(vehiclesCache)
 })
 
 // =======================
-// LIVE TRACKING (FIXED)
+// LIVE TRACKING
 // =======================
 app.get("/liveTracking", async (req, res) => {
 
-    const tripId = req.query.tripId
-    if (!tripId) return res.json({ error: "Missing tripId" })
+```
+const tripId = req.query.tripId
+if (!tripId) return res.json({ error: "Missing tripId" })
 
-    try {
+try {
 
-        let vehicleId = lockedVehicles[tripId]
-        let arrivalData = null
+    let vehicleId = lockedVehicles[tripId]
+    let arrivalData = null
 
-        for (const stopId in arrivalsCache) {
-            for (const a of arrivalsCache[stopId]) {
-                if (a.tripId === tripId) {
-                    arrivalData = a
+    for (const stopId in arrivalsCache) {
+        for (const a of arrivalsCache[stopId]) {
+            if (a.tripId === tripId) {
+                arrivalData = a
 
-                    if (!vehicleId && a.vehicleId) {
-                        vehicleId = a.vehicleId
-                        lockedVehicles[tripId] = vehicleId
-                    }
-
-                    break
+                if (!vehicleId && a.vehicleId) {
+                    vehicleId = a.vehicleId
+                    lockedVehicles[tripId] = vehicleId
                 }
-            }
-            if (arrivalData) break
-        }
 
-        if (!vehicleId) {
-            return res.json({ error: "Vehicle not found yet" })
-        }
-
-        const clean = vehicleId.split("/").pop()
-
-        const vehicle = vehiclesCache.find(v =>
-            (v[0] || "").split("/").pop() === clean
-        )
-
-        let lat, lon
-
-        if (vehicle && vehicle[6]) {
-            lat = vehicle[6][0]
-            lon = vehicle[6][1]
-            lastKnownPositions[vehicleId] = { lat, lon }
-        } else {
-            const last = lastKnownPositions[vehicleId]
-            if (!last) return res.json({ error: "Vehicle position not found" })
-
-            lat = last.lat
-            lon = last.lon
-        }
-
-        const now = Date.now()
-        let speed = 0
-
-        if (speedCache[vehicleId]) {
-            const prev = speedCache[vehicleId]
-
-            const dist = distance(prev.lat, prev.lon, lat, lon)
-            const time = (now - prev.time) / 1000
-
-            speed = time > 0 ? dist / time : 0
-        }
-
-        speedCache[vehicleId] = { lat, lon, time: now }
-
-        let eta = null
-        if (speed > 1) eta = Math.round(60 / speed)
-
-        const tripData = await getTripSafe(vehicleId)
-
-        const lineId =
-            tripData?.trip?.route?.shortName ||
-            arrivalData?.lineId ||
-            ""
-
-        // =======================
-        // AUTO SAVE ROUTES
-        // =======================
-        if (tripData?.trip && lineId && !routes[lineId]) {
-
-            routes[lineId] = {
-                shape: tripData.trip.shape || [],
-                stops: (tripData.trip.stops || []).map(s => {
-                    const full = stopsById[s.stopId]
-
-                    return {
-                        name: full?.name?.bg || "Unknown",
-                        geo: full?.geo
-                    }
-                })
-            }
-
-            console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
-            fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
-        }
-
-        // =======================
-        // ROUTE
-        // =======================
-        let route = routes[lineId] || null
-
-        // =======================
-        // NEXT STOP
-        // =======================
-        let nextStop = null
-
-        if (route?.stops?.length && lat && lon) {
-
-            let minDist = Infinity
-
-            for (const stop of route.stops) {
-
-                if (!stop?.geo?.coords) continue
-
-                const d = distance(
-                    lat,
-                    lon,
-                    stop.geo.coords[0],
-                    stop.geo.coords[1]
-                )
-
-                if (d < minDist) {
-                    minDist = d
-                    nextStop = stop
-                }
+                break
             }
         }
-
-        return res.json({
-            vehicleId,
-            lat,
-            lon,
-            eta,
-            nextStop: nextStop?.name || null,
-            delay: tripData?.delay ?? 0,
-            lineId,
-            stops: route?.stops || [],
-            shape: route?.shape || []
-        })
-
-    } catch (e) {
-        console.log("Live error:", e.message)
-        res.json({ error: "Internal error" })
+        if (arrivalData) break
     }
+
+    if (!vehicleId) {
+        return res.json({ error: "Vehicle not found yet" })
+    }
+
+    const clean = vehicleId.split("/").pop()
+
+    const vehicle = vehiclesCache.find(v =>
+        (v[0] || "").split("/").pop() === clean
+    )
+
+    let lat, lon
+
+    if (vehicle && vehicle[6]) {
+        lat = vehicle[6][0]
+        lon = vehicle[6][1]
+        lastKnownPositions[vehicleId] = { lat, lon }
+    } else {
+        const last = lastKnownPositions[vehicleId]
+        if (!last) return res.json({ error: "Vehicle position not found" })
+
+        lat = last.lat
+        lon = last.lon
+    }
+
+    const now = Date.now()
+    let speed = 0
+
+    if (speedCache[vehicleId]) {
+        const prev = speedCache[vehicleId]
+
+        const dist = distance(prev.lat, prev.lon, lat, lon)
+        const time = (now - prev.time) / 1000
+
+        speed = time > 0 ? dist / time : 0
+    }
+
+    speedCache[vehicleId] = { lat, lon, time: now }
+
+    let eta = null
+    if (speed > 1) eta = Math.round(60 / speed)
+
+    const tripData = await getTripSafe(vehicleId)
+
+    let lineId =
+        tripData?.trip?.route?.shortName ||
+        arrivalData?.lineId ||
+        ""
+
+    // 🔥 FIX: правилен номер на линия
+    if (linesById[lineId]) {
+        lineId = linesById[lineId].name
+    }
+
+    // =======================
+    // AUTO SAVE ROUTES
+    // =======================
+    if (tripData?.trip && lineId && !routes[lineId]) {
+
+        routes[lineId] = {
+            shape: tripData.trip.shape || [],
+            stops: (tripData.trip.stops || []).map(s => {
+                const full = stopsById[s.stopId]
+
+                return {
+                    name: full?.name?.bg || "Unknown",
+                    geo: full?.geo
+                }
+            })
+        }
+
+        console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
+        fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
+    }
+
+    let route = routes[lineId] || null
+
+    let nextStop = null
+
+    if (route?.stops?.length && lat && lon) {
+
+        let minDist = Infinity
+
+        for (const stop of route.stops) {
+
+            if (!stop?.geo?.coords) continue
+
+            const d = distance(
+                lat,
+                lon,
+                stop.geo.coords[0],
+                stop.geo.coords[1]
+            )
+
+            if (d < minDist) {
+                minDist = d
+                nextStop = stop
+            }
+        }
+    }
+
+    return res.json({
+        vehicleId,
+        lat,
+        lon,
+        eta,
+        nextStop: nextStop?.name || null,
+        delay: tripData?.delay ?? 0,
+        lineId,
+        stops: route?.stops || [],
+        shape: route?.shape || []
+    })
+
+} catch (e) {
+    console.log("Live error:", e.message)
+    res.json({ error: "Internal error" })
+}
+```
+
 })
 
 // =======================
 // START
 // =======================
 app.listen(PORT, () => {
-    console.log("Server running on port " + PORT)
+console.log("Server running on port " + PORT)
 })
 
 async function startServer() {
-    await loadStops()
+await loadStops()
 
-    for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
-        enqueue(stopsCache[i].id)
-    }
+```
+for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
+    enqueue(stopsCache[i].id)
+}
 
-    processQueue()
-    connectWS()
+processQueue()
+connectWS()
 
-    setInterval(loadArrivals, 5000)
-    setInterval(loadStops, 5 * 60 * 1000)
+setInterval(loadArrivals, 5000)
+setInterval(loadStops, 5 * 60 * 1000)
+```
+
 }
 
 startServer()
