@@ -304,7 +304,11 @@ const lineId =
     arrivalData?.lineId ||
     ""
 
-const route = getRouteByLine(lineId)
+const route = lineId ? getRouteByLine(lineId) : null
+
+if (!lat || !lon) {
+    return res.json({ error: "Vehicle position not found" })
+}
 
 return res.json({
     vehicleId,
@@ -314,7 +318,8 @@ return res.json({
     nextStop: tripData?.nextStop ?? null,
     delay: tripData?.delay ?? 0,
 
-    lineId,
+    lineId: lineId || "",
+
     stops: route?.stops || [],
     shape: route?.shape || ""
 })
