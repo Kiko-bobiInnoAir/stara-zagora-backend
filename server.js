@@ -338,13 +338,17 @@ if (
     routes[lineId].stops.length === 0
 ) {
             routes[lineId] = {
-                shape: tripData.trip.shape || [],
+                shape: String(tripData.trip.shape || ""),
                 stops: (tripData.trip.stops || []).map(s => {
                     const full = stopsById[s.stopId]
 
 return {
     id: s.stopId,
-    name: full?.name?.bg || "Unknown",
+    name:
+    full?.name?.bg ||
+    full?.name ||
+    s.name ||
+    "Спирка",
     geo: full?.geo
 }
                 })
