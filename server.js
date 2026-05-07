@@ -340,10 +340,10 @@ if (
             routes[lineId] = {
                 shape: String(tripData.trip.shape || ""),
                 stops: (tripData.trip.stops || []).map(s => {
-                    const full = stopsById[s.stopId]
+                    const full = stopsById[s.id]
 
 return {
-    id: s.stopId,
+   id: s.id,
     name:
     full?.name?.bg ||
     full?.name ||
