@@ -332,14 +332,18 @@ console.log(JSON.stringify(tripData, null, 2))
         // =======================
        if (tripData?.trip && lineId) {
 
-if (!routes[lineId]) {
+if (
+    !routes[lineId] ||
+    !routes[lineId].stops ||
+    routes[lineId].stops.length === 0
+) {
             routes[lineId] = {
                 shape: tripData.trip.shape || [],
                 stops: (tripData.trip.stops || []).map(s => {
-                    const full = stopsById[s.id]
+                    const full = stopsById[s.stopId]
 
-                   return {
-    id: s.id,
+return {
+    id: s.stopId,
     name: full?.name?.bg || "Unknown",
     geo: full?.geo
 }
