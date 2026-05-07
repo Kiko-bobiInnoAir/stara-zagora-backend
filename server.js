@@ -22,6 +22,14 @@ const lockedVehicles = {}
 const lastKnownPositions = {}
 const speedCache = {}
 
+// =======================
+// TRIP CACHE
+// =======================
+const tripCache = {}
+const tripLastFetch = {}
+
+const TRIP_CACHE_MS = 60000 // 1 минута
+
 const fetch = (...args) =>
 import("node-fetch").then(({ default: fetch }) => fetch(...args))
 
@@ -170,21 +178,39 @@ return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 async function getTripSafe(vehicleId) {
-try {
-const res = await fetch(`${API}/vehicle/${encodeURIComponent(vehicleId)}`)
-if (!res.ok) return null
 
+    try {
 
-    const data = await res.json()
-    return data || null
+        // 🔥 cache защита
+        if (
+            tripCache[vehicleId] &&
+            tripLastFetch[vehicleId] &&
+            Date.now() - tripLastFetch[vehicleId] < TRIP_CACHE_MS
+        ) {
+            return tripCache[vehicleId]
+        }
 
-} catch {
-    return null
+        // 🔥 правилния endpoint
+        const res = await fetch(
+            `${API}/vehicle/${encodeURIComponent(vehicleId)}/trip`
+        )
+
+        if (!res.ok) return null
+
+        const data = await res.json()
+
+        // 🔥 save cache
+        tripCache[vehicleId] = data
+        tripLastFetch[vehicleId] = Date.now()
+
+        return data
+
+    } catch (e) {
+
+        console.log("Trip error:", e.message)
+        return null
+    }
 }
-
-
-}
-
 // =======================
 // API
 // =======================
@@ -287,9 +313,9 @@ app.get("/liveTracking", async (req, res) => {
         // ✅ FIX ЛИНИЯ (94 вместо 22)
         // =======================
         let rawLineId =
-            tripData?.trip?.route?.id ||
-            arrivalData?.lineId ||
-            ""
+    tripData?.trip?.lineId ||
+    arrivalData?.lineId ||
+    ""
 
         let lineId = rawLineId
 
@@ -300,22 +326,25 @@ app.get("/liveTracking", async (req, res) => {
         // =======================
         // ✅ SAVE ROUTE ПРАВИЛНО
         // =======================
-        if (tripData?.trip && lineId && !routes[lineId]) {
+       if (tripData?.trip && lineId) {
 
+if (!routes[lineId]) {
             routes[lineId] = {
                 shape: tripData.trip.shape || [],
                 stops: (tripData.trip.stops || []).map(s => {
-                    const full = stopsById[s.stopId]
+                    const full = stopsById[s.id]
 
-                    return {
-                        name: full?.name?.bg || "Unknown",
-                        geo: full?.geo
-                    }
+                   return {
+    id: s.id,
+    name: full?.name?.bg || "Unknown",
+    geo: full?.geo
+}
                 })
             }
 
             console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
             fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
+}
         }
 
         let route = routes[lineId] || null
