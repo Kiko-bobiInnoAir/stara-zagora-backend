@@ -311,6 +311,7 @@ app.get("/liveTracking", async (req, res) => {
         if (speed > 1) eta = Math.round(60 / speed)
 
         const tripData = await getTripSafe(vehicleId)
+console.log(JSON.stringify(tripData, null, 2))
 
         // =======================
         // ✅ FIX ЛИНИЯ (94 вместо 22)
