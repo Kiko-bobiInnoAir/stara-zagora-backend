@@ -236,6 +236,9 @@ res.json(arrivalsCache[stopId] || [])
 app.get("/vehicles", (req, res) => {
 res.json(vehiclesCache)
 })
+app.get("/routes", (req, res) => {
+    res.json(routes)
+})
 
 // =======================
 // LIVE TRACKING (FIXED)
