@@ -307,8 +307,11 @@ app.get("/liveTracking", async (req, res) => {
 
         speedCache[vehicleId] = { lat, lon, time: now }
 
-        let eta = null
-        if (speed > 1) eta = Math.round(60 / speed)
+        let eta = 0
+
+if (speed > 0.5) {
+    eta = Math.max(1, Math.round(60 / speed))
+}
 
         const tripData = await getTripSafe(vehicleId)
 console.log(JSON.stringify(tripData, null, 2))
