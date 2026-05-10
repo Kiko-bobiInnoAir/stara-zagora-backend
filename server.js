@@ -391,17 +391,21 @@ return {
             }
         }
 
-        return res.json({
-            vehicleId,
-            lat,
-            lon,
-            eta,
-            nextStop: nextStop?.name || null,
-            delay: tripData?.delay ?? 0,
-            lineId, // 👉 вече е правилния номер (94)
-            stops: route?.stops || [],
-            shape: route?.shape || []
-        })
+       return res.json({
+    vehicleId,
+    lat,
+    lon,
+    eta,
+    nextStop: nextStop?.name || null,
+    delay: tripData?.delay ?? 0,
+    lineId,
+    direction:
+        tripData?.trip?.headsign ||
+        tripData?.trip?.direction ||
+        "",
+    stops: route?.stops || [],
+    shape: route?.shape || []
+})
 
     } catch (e) {
         console.log("Live error:", e.message)
