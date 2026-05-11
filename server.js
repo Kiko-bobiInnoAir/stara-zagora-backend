@@ -391,19 +391,27 @@ return {
             }
         }
 
-       return res.json({
+    return res.json({
     vehicleId,
     lat,
     lon,
     eta,
-    nextStop: nextStop?.name || null,
-    delay: tripData?.delay ?? 0,
-    lineId,
+
+    // 🔥 ПОСОКА
     direction:
         tripData?.trip?.headsign ||
         tripData?.trip?.direction ||
+        arrivalData?.destination?.bg ||
         "",
+
+    nextStop: nextStop?.name || null,
+
+    delay: tripData?.delay ?? 0,
+
+    lineId,
+
     stops: route?.stops || [],
+
     shape: route?.shape || []
 })
 
