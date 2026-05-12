@@ -240,6 +240,56 @@ app.get("/routes", (req, res) => {
     res.json(routes)
 })
 
+app.get("/routesHtml", (req, res) => {
+
+    const htmlRoutes = {}
+
+    for (const lineId in routes) {
+
+        const route = routes[lineId]
+
+        if (!route?.stops?.length) continue
+
+        let directionKey =
+            (route.stops[0]?.name || "route")
+                .toLowerCase()
+                .replace(/\s+/g, "_") +
+            "_" +
+            (route.stops[route.stops.length - 1]?.name || "route")
+                .toLowerCase()
+                .replace(/\s+/g, "_")
+
+        htmlRoutes[directionKey] = route.stops.map((s, index) => {
+
+            const lat =
+                s?.geo?.coords?.[0] || 0
+
+            const lon =
+                s?.geo?.coords?.[1] || 0
+
+            return {
+
+                name: s.name || "Спирка",
+
+                lat: lat,
+
+                lon: lon,
+
+                a:
+                    (
+                        s.name ||
+                        ("stop_" + index)
+                    )
+                        .toLowerCase()
+                        .replace(/[^a-zа-я0-9]+/gi, "_")
+            }
+        })
+    }
+
+    res.json(htmlRoutes)
+})
+
+
 // =======================
 // LIVE TRACKING (FIXED)
 // =======================
