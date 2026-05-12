@@ -1,7 +1,20 @@
+const fs = require("fs")
 const express = require("express")
 const WebSocket = require("ws")
-const fs = require("fs")
-const routes = require("./routes.json")
+let routes = {}
+
+try {
+
+    routes = JSON.parse(
+        fs.readFileSync("./routes.json", "utf8")
+    )
+
+    console.log("✅ Routes loaded")
+
+} catch (e) {
+
+    console.log("⚠️ routes.json missing")
+}
 
 const app = express()
 const PORT = process.env.PORT || 3000
