@@ -282,20 +282,14 @@ app.get("/routesHtml", (req, res) => {
 
             return {
 
-                name: s.name || "Спирка",
+    name: s.name || "Спирка",
 
-                lat: lat,
+    lat: lat,
 
-                lon: lon,
+    lon: lon,
 
-                a:
-                    (
-                        s.name ||
-                        ("stop_" + index)
-                    )
-                        .toLowerCase()
-                        .replace(/[^a-zа-я0-9]+/gi, "_")
-            }
+    a: String(s.id)
+}
         })
     }
 
