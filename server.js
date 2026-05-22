@@ -388,55 +388,48 @@ console.log(JSON.stringify(tripData, null, 2))
         }
 
         // =======================
-        // ✅ SAVE ROUTE ПРАВИЛНО
-        // =======================
-       if (tripData?.trip && lineId) {
+       // =======================
+// ✅ SAVE ROUTE ПРАВИЛНО
+// =======================
+if (tripData?.trip && lineId) {
 
-const newStops =
-    (tripData.trip.stops || []).map(s => {
+    const newStops =
+        (tripData.trip.stops || []).map(s => {
 
-        const full = stopsById[s.id]
+            const full = stopsById[s.id]
 
-        return {
-            id: s.id,
-            name:
-                full?.name?.bg ||
-                full?.name ||
-                s.name ||
-                "Спирка",
-            geo: full?.geo
-        }
-    })
-
-if (
-    !routes[lineId] ||
-    !routes[lineId].stops ||
-    newStops.length > routes[lineId].stops.length
-) {
-            routes[lineId] = {
-                shape: String(tripData.trip.shape || ""),
-               stops: newStops
-                    const full = stopsById[s.id]
-
-return {
-   id: s.id,
-    name:
-    full?.name?.bg ||
-    full?.name ||
-    s.name ||
-    "Спирка",
-    geo: full?.geo
-}
-                })
+            return {
+                id: s.id,
+                name:
+                    full?.name?.bg ||
+                    full?.name ||
+                    s.name ||
+                    "Спирка",
+                geo: full?.geo
             }
+        })
 
-            console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
-            fs.writeFileSync("routes.json", JSON.stringify(routes, null, 2))
-}
+    if (
+        !routes[lineId] ||
+        !routes[lineId].stops ||
+        newStops.length > routes[lineId].stops.length
+    ) {
+
+        routes[lineId] = {
+            shape: String(tripData.trip.shape || ""),
+            stops: newStops
         }
 
-        let route = routes[lineId] || null
+        console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
 
+        fs.writeFileSync(
+            "routes.json",
+            JSON.stringify(routes, null, 2)
+        )
+    }
+}
+
+let route = routes[lineId] || null
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
