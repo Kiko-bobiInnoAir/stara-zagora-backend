@@ -392,14 +392,30 @@ console.log(JSON.stringify(tripData, null, 2))
         // =======================
        if (tripData?.trip && lineId) {
 
+const newStops =
+    (tripData.trip.stops || []).map(s => {
+
+        const full = stopsById[s.id]
+
+        return {
+            id: s.id,
+            name:
+                full?.name?.bg ||
+                full?.name ||
+                s.name ||
+                "Спирка",
+            geo: full?.geo
+        }
+    })
+
 if (
     !routes[lineId] ||
     !routes[lineId].stops ||
-    routes[lineId].stops.length === 0
+    newStops.length > routes[lineId].stops.length
 ) {
             routes[lineId] = {
                 shape: String(tripData.trip.shape || ""),
-                stops: (tripData.trip.stops || []).map(s => {
+               stops: newStops
                     const full = stopsById[s.id]
 
 return {
