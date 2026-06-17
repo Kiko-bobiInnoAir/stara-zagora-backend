@@ -211,6 +211,9 @@ async function getTripSafe(vehicleId) {
         if (!res.ok) return null
 
         const data = await res.json()
+console.log(
+    JSON.stringify(data, null, 2)
+)
 
         // 🔥 save cache
         tripCache[vehicleId] = data
