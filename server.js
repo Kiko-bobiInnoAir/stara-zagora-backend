@@ -247,6 +247,8 @@ if (!arrivalsCache[stopId]) enqueue(stopId)
 res.json(arrivalsCache[stopId] || [])
 
 
+
+
 })
 
 app.get("/vehicles", (req, res) => {
@@ -476,13 +478,18 @@ let route = routes[directionKey] || null
             }
         }
 
-    return res.json({
+   return res.json({
     vehicleId,
     lat,
     lon,
     eta,
 
-    // 🔥 ПОСОКА
+    scheduledStart:
+        tripData?.time?.scheduled || 0,
+
+    actualStart:
+        tripData?.time?.actual || 0,
+
     direction:
         tripData?.trip?.headsign ||
         tripData?.trip?.direction ||
@@ -498,6 +505,7 @@ let route = routes[directionKey] || null
     stops: route?.stops || [],
 
     shape: route?.shape || []
+
 })
 
     } catch (e) {
