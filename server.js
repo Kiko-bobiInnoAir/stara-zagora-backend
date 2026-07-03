@@ -39,9 +39,6 @@ const speedCache = {}
 // TRIP CACHE
 // =======================
 const tripCache = {}
-const tripLastFetch = {}
-
-const TRIP_CACHE_MS = 60000 // 1 минута
 
 const fetch = (...args) =>
 import("node-fetch").then(({ default: fetch }) => fetch(...args))
@@ -195,13 +192,10 @@ async function getTripSafe(vehicleId) {
     try {
 
         // 🔥 cache защита
-        if (
-            tripCache[vehicleId] &&
-            tripLastFetch[vehicleId] &&
-            Date.now() - tripLastFetch[vehicleId] < TRIP_CACHE_MS
-        ) {
-            return tripCache[vehicleId]
-        }
+
+      if (tripCache[vehicleId]) {
+    return tripCache[vehicleId]
+}
 
         // 🔥 правилния endpoint
         const res = await fetch(
@@ -216,8 +210,7 @@ console.log(
 )
 
         // 🔥 save cache
-        tripCache[vehicleId] = data
-        tripLastFetch[vehicleId] = Date.now()
+       tripCache[vehicleId] = data
 
         return data
 
@@ -398,21 +391,27 @@ console.log(JSON.stringify(tripData, null, 2))
 // =======================
 if (tripData?.trip && lineId) {
 
-    const newStops =
-        (tripData.trip.stops || []).map(s => {
+   const newStops =
+    (tripData.trip.stops || []).map(s => {
 
-            const full = stopsById[s.id]
+        const full = stopsById[s.id]
 
-            return {
-                id: s.id,
-                name:
-                    full?.name?.bg ||
-                    full?.name ||
-                    s.name ||
-                    "Спирка",
-                geo: full?.geo
-            }
-        })
+        return {
+
+            id: s.id,
+
+            name:
+                full?.name?.bg ||
+                full?.name ||
+                s.name ||
+                "Спирка",
+
+            geo: full?.geo,
+
+            scheduled: s.scheduled || 0
+
+        }
+    })
 
     if (
         !routes[lineId] ||
@@ -420,13 +419,7 @@ if (tripData?.trip && lineId) {
         newStops.length > routes[lineId].stops.length
     ) {
 
-        const directionKey =
-    lineId + "_" +
-    (
-        tripData?.trip?.headsign ||
-        tripData?.trip?.direction ||
-        "unknown"
-    )
+      
 
 routes[directionKey] = {
     shape: String(tripData.trip.shape || ""),
@@ -441,6 +434,14 @@ routes[directionKey] = {
         )
     }
 }
+
+const directionKey =
+    lineId + "_" +
+    (
+        tripData?.trip?.headsign ||
+        tripData?.trip?.direction ||
+        "unknown"
+    )
 
 const directionKey =
     lineId + "_" +
