@@ -384,6 +384,13 @@ console.log(JSON.stringify(tripData, null, 2))
         if (linesById[rawLineId]) {
             lineId = linesById[rawLineId].name // 👉 това дава 94
         }
+const directionKey =
+    lineId + "_" +
+    (
+        tripData?.trip?.headsign ||
+        tripData?.trip?.direction ||
+        "unknown"
+    )
 
         // =======================
        // =======================
@@ -435,21 +442,7 @@ routes[directionKey] = {
     }
 }
 
-const directionKey =
-    lineId + "_" +
-    (
-        tripData?.trip?.headsign ||
-        tripData?.trip?.direction ||
-        "unknown"
-    )
 
-const directionKey =
-    lineId + "_" +
-    (
-        tripData?.trip?.headsign ||
-        tripData?.trip?.direction ||
-        "unknown"
-    )
 
 let route = routes[directionKey] || null
         // =======================
