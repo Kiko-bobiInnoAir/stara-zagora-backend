@@ -187,6 +187,9 @@ const R = 6371000
 const dLat = (lat2 - lat1) * Math.PI / 180
 const dLon = (lon2 - lon1) * Math.PI / 180
 
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 const a =
     Math.sin(dLat / 2) ** 2 +
