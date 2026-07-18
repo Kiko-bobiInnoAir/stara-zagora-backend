@@ -38,13 +38,25 @@ const speedCache = {}
 // =======================
 // TRIP CACHE
 // =======================
-const tripCache = {}
+async function getTripSafe(vehicleId) {
 
-const fetch = (...args) =>
-import("node-fetch").then(({ default: fetch }) => fetch(...args))
+    try {
 
-function delay(ms) {
-return new Promise(res => setTimeout(res, ms))
+        const res = await fetch(
+            `${API}/vehicle/${encodeURIComponent(vehicleId)}/trip`
+        )
+
+        if (!res.ok) {
+            return null
+        }
+
+        return await res.json()
+
+    } catch (e) {
+
+        console.log("Trip error:", e.message)
+        return null
+    }
 }
 
 // =======================
@@ -187,39 +199,6 @@ return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 
 }
 
-async function getTripSafe(vehicleId) {
-
-    try {
-
-        // 🔥 cache защита
-
-      if (tripCache[vehicleId]) {
-    return tripCache[vehicleId]
-}
-
-        // 🔥 правилния endpoint
-        const res = await fetch(
-            `${API}/vehicle/${encodeURIComponent(vehicleId)}/trip`
-        )
-
-        if (!res.ok) return null
-
-        const data = await res.json()
-console.log(
-    JSON.stringify(data, null, 2)
-)
-
-        // 🔥 save cache
-       tripCache[vehicleId] = data
-
-        return data
-
-    } catch (e) {
-
-        console.log("Trip error:", e.message)
-        return null
-    }
-}
 // =======================
 // API
 // =======================
@@ -379,13 +358,11 @@ console.log(JSON.stringify(tripData, null, 2))
     arrivalData?.lineId ||
     ""
 
-        let lineId = rawLineId
+        const lineNumber =
+    linesById[rawLineId]?.name || rawLineId
 
-        if (linesById[rawLineId]) {
-            lineId = linesById[rawLineId].name // 👉 това дава 94
-        }
 const directionKey =
-    lineId + "_" +
+    lineNumber + "_" +
     (
         tripData?.trip?.headsign ||
         tripData?.trip?.direction ||
@@ -396,7 +373,7 @@ const directionKey =
        // =======================
 // ✅ SAVE ROUTE ПРАВИЛНО
 // =======================
-if (tripData?.trip && lineId) {
+if (tripData?.trip && lineNumber) {
 
    const newStops =
     (tripData.trip.stops || []).map(s => {
@@ -421,10 +398,10 @@ if (tripData?.trip && lineId) {
     })
 
     if (
-        !routes[lineId] ||
-        !routes[lineId].stops ||
-        newStops.length > routes[lineId].stops.length
-    ) {
+    !routes[directionKey] ||
+    !routes[directionKey].stops ||
+    newStops.length > routes[directionKey].stops.length
+) {
 
       
 
@@ -433,7 +410,7 @@ routes[directionKey] = {
     stops: newStops
 }
 
-        console.log("💾 ЗАПИСАНА ЛИНИЯ:", lineId)
+        console.log("💾 ЗАПИСАНА ЛИНИЯ:", directionKey)
 
         fs.writeFileSync(
             "routes.json",
@@ -494,9 +471,30 @@ let route = routes[directionKey] || null
 
     delay: tripData?.delay ?? 0,
 
-    lineId,
+    lineId: lineNumber,
 
-    stops: route?.stops || [],
+   stops:
+    route?.stops?.length
+        ? route.stops
+        : (tripData?.trip?.stops || []).map(s => {
+
+            const full = stopsById[s.id]
+
+            return {
+
+                id: s.id,
+
+                name:
+                    full?.name?.bg ||
+                    full?.name ||
+                    s.name,
+
+                geo: full?.geo,
+
+                scheduled: s.scheduled || 0
+            }
+
+        }),
 
     shape: route?.shape || []
 
