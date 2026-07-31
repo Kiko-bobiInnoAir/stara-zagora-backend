@@ -429,27 +429,42 @@ console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
-       let nextStop = null
+     let nextStop = null
 
-if (tripData?.trip?.stops?.length) {
+if (route?.stops?.length) {
 
+    let nearestIndex = -1
+    let nearestDistance = Infinity
 
-console.log(JSON.stringify(tripData.trip.stops[0], null, 2))
-    const tripStops = tripData.trip.stops
+    for (let i = 0; i < route.stops.length; i++) {
 
-    for (const s of tripStops) {
+        const stop = route.stops[i]
 
-        if (s.arrived) continue
-        if (s.passed) continue
+        if (!stop?.geo?.coords) continue
 
-        const full = stopsById[s.id]
+        const d = distance(
+            lat,
+            lon,
+            stop.geo.coords[0],
+            stop.geo.coords[1]
+        )
 
-        nextStop = {
-            id: s.id,
-            name: full?.name?.bg || full?.name || s.name || "Спирка"
+        if (d < nearestDistance) {
+            nearestDistance = d
+            nearestIndex = i
+        }
+    }
+
+    if (nearestIndex !== -1) {
+
+        if (
+            nearestDistance < 150 &&
+            nearestIndex < route.stops.length - 1
+        ) {
+            nearestIndex++
         }
 
-        break
+        nextStop = route.stops[nearestIndex]
     }
 }
 
