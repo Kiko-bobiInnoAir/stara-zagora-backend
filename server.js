@@ -362,13 +362,13 @@ console.log(JSON.stringify(tripData, null, 2))
         const lineNumber =
     linesById[rawLineId]?.name || rawLineId
 
-const directionKey =
-    lineNumber + "_" +
-    (
-        tripData?.trip?.headsign ||
-        tripData?.trip?.direction ||
-        "unknown"
-    )
+const destination =
+    tripData?.trip?.destination?.bg ||
+    tripData?.destination?.bg ||
+    arrivalData?.destination?.bg ||
+    "unknown"
+
+const directionKey = `${lineNumber}_${destination}`
 
         // =======================
        // =======================
