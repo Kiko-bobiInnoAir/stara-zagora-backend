@@ -393,7 +393,7 @@ if (tripData?.trip && lineNumber) {
 
             geo: full?.geo,
 
-            scheduled: s.scheduled || 0
+            scheduledTime: s.scheduled || 0
 
         }
     })
@@ -493,7 +493,7 @@ if (tripData?.trip?.stops?.length) {
 
                 geo: full?.geo,
 
-                scheduled: s.scheduled || 0
+                scheduledTime: s.scheduled || 0
             }
 
         }),
