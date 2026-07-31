@@ -1,6 +1,7 @@
 const fs = require("fs")
 const express = require("express")
 const WebSocket = require("ws")
+const vehicleProgress = new Map()
 let routes = {}
 
 try {
@@ -429,7 +430,7 @@ console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
-     let nextStop = null
+    let nextStop = null
 
 if (route?.stops?.length) {
 
@@ -457,14 +458,43 @@ if (route?.stops?.length) {
 
     if (nearestIndex !== -1) {
 
-        if (
-            nearestDistance < 150 &&
-            nearestIndex < route.stops.length - 1
-        ) {
-            nearestIndex++
+        let progress = vehicleProgress.get(vehicleId)
+
+        if (!progress) {
+
+            progress = {
+                stopIndex: nearestIndex,
+                minDistance: nearestDistance
+            }
+
+        } else {
+
+            if (nearestIndex === progress.stopIndex) {
+
+                // още се приближава
+                if (nearestDistance < progress.minDistance) {
+
+                    progress.minDistance = nearestDistance
+
+                } else if (
+                    nearestDistance > progress.minDistance + 20 &&
+                    progress.stopIndex < route.stops.length - 1
+                ) {
+
+                    progress.stopIndex++
+                    progress.minDistance = Infinity
+                }
+
+            } else {
+
+                progress.stopIndex = nearestIndex
+                progress.minDistance = nearestDistance
+            }
         }
 
-        nextStop = route.stops[nearestIndex]
+        vehicleProgress.set(vehicleId, progress)
+
+        nextStop = route.stops[progress.stopIndex]
     }
 }
 
