@@ -433,6 +433,8 @@ console.log("route last =", route?.stops?.at(-1)?.name)
 
 if (tripData?.trip?.stops?.length) {
 
+
+console.log(JSON.stringify(tripData.trip.stops[0], null, 2))
     const tripStops = tripData.trip.stops
 
     for (const s of tripStops) {
