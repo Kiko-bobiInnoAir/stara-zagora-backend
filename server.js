@@ -423,32 +423,33 @@ routes[directionKey] = {
 
 
 let route = routes[directionKey] || null
+console.log("directionKey =", directionKey)
+console.log("route first =", route?.stops?.[0]?.name)
+console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
-        let nextStop = null
+       let nextStop = null
 
-        if (route?.stops?.length && lat && lon) {
+if (tripData?.trip?.stops?.length) {
 
-            let minDist = Infinity
+    const tripStops = tripData.trip.stops
 
-            for (const stop of route.stops) {
+    for (const s of tripStops) {
 
-                if (!stop?.geo?.coords) continue
+        if (s.arrived) continue
+        if (s.passed) continue
 
-                const d = distance(
-                    lat,
-                    lon,
-                    stop.geo.coords[0],
-                    stop.geo.coords[1]
-                )
+        const full = stopsById[s.id]
 
-                if (d < minDist) {
-                    minDist = d
-                    nextStop = stop
-                }
-            }
+        nextStop = {
+            id: s.id,
+            name: full?.name?.bg || full?.name || s.name || "Спирка"
         }
+
+        break
+    }
+}
 
    return res.json({
     vehicleId,
