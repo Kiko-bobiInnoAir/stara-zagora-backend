@@ -434,68 +434,71 @@ console.log("route last =", route?.stops?.at(-1)?.name)
 
 if (route?.stops?.length) {
 
-    let nearestIndex = -1
-    let nearestDistance = Infinity
+    let progress = vehicleProgress.get(vehicleId)
 
-    for (let i = 0; i < route.stops.length; i++) {
+    // Първо стартиране
+    if (!progress) {
 
-        const stop = route.stops[i]
+        let nearestIndex = 0
+        let nearestDistance = Infinity
 
-        if (!stop?.geo?.coords) continue
+        for (let i = 0; i < route.stops.length; i++) {
 
-        const d = distance(
-            lat,
-            lon,
-            stop.geo.coords[0],
-            stop.geo.coords[1]
-        )
+            const stop = route.stops[i]
 
-        if (d < nearestDistance) {
-            nearestDistance = d
-            nearestIndex = i
-        }
-    }
+            if (!stop?.geo?.coords) continue
 
-    if (nearestIndex !== -1) {
+            const d = distance(
+                lat,
+                lon,
+                stop.geo.coords[0],
+                stop.geo.coords[1]
+            )
 
-        let progress = vehicleProgress.get(vehicleId)
-
-        if (!progress) {
-
-            progress = {
-                stopIndex: nearestIndex,
-                minDistance: nearestDistance
-            }
-
-        } else {
-
-            if (nearestIndex === progress.stopIndex) {
-
-                // още се приближава
-                if (nearestDistance < progress.minDistance) {
-
-                    progress.minDistance = nearestDistance
-
-                } else if (
-                    nearestDistance > progress.minDistance + 20 &&
-                    progress.stopIndex < route.stops.length - 1
-                ) {
-
-                    progress.stopIndex++
-                    progress.minDistance = Infinity
-                }
-
-            } else {
-
-                progress.stopIndex = nearestIndex
-                progress.minDistance = nearestDistance
+            if (d < nearestDistance) {
+                nearestDistance = d
+                nearestIndex = i
             }
         }
 
-        vehicleProgress.set(vehicleId, progress)
+        progress = {
+            currentIndex: nearestIndex
+        }
 
-        nextStop = route.stops[progress.stopIndex]
+    } else {
+
+        const current = route.stops[progress.currentIndex]
+        const next = route.stops[progress.currentIndex + 1]
+
+        if (current?.geo?.coords && next?.geo?.coords) {
+
+            const currentDistance = distance(
+                lat,
+                lon,
+                current.geo.coords[0],
+                current.geo.coords[1]
+            )
+
+            const nextDistance = distance(
+                lat,
+                lon,
+                next.geo.coords[0],
+                next.geo.coords[1]
+            )
+
+            // Минава към следващата само когато следващата вече е по-близо
+            if (
+                nextDistance + 150 < currentDistance &&
+                progress.currentIndex < route.stops.length - 1
+            ) {
+                progress.currentIndex++
+            }
+        }
     }
+
+    vehicleProgress.set(vehicleId, progress)
+
+    nextStop = route.stops[progress.currentIndex]
 }
 
    return res.json({
