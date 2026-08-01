@@ -488,7 +488,7 @@ if (route?.stops?.length) {
 
             // Минава към следващата само когато следващата вече е по-близо
             if (
-                nextDistance + 150 < currentDistance &&
+                nextDistance + 500 < currentDistance &&
                 progress.currentIndex < route.stops.length - 1
             ) {
                 progress.currentIndex++
