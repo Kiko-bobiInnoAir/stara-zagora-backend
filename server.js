@@ -460,7 +460,8 @@ console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
-   let nextStop = null
+ 
+let nextStop = null
 let nextStopIndex = -1
 
 if (route?.stops?.length) {
@@ -469,7 +470,9 @@ if (route?.stops?.length) {
 
     let progress = vehicleProgress.get(progressKey)
 
-    // Първо отваряне на този курс
+    // =========================
+    // ПЪРВО ОТВАРЯНЕ НА КУРСА
+    // =========================
     if (!progress) {
 
         let nearestIndex = 0
@@ -501,8 +504,8 @@ if (route?.stops?.length) {
 
     } else {
 
-        const current =
-            route.stops[progress.currentIndex]
+        const currentIndex = progress.currentIndex
+        const current = route.stops[currentIndex]
 
         if (current?.geo?.coords) {
 
@@ -513,20 +516,69 @@ if (route?.stops?.length) {
                 current.geo.coords[1]
             )
 
-            // Автобусът е стигнал текущата спирка
+            // =========================
+            // СТИГНАЛ Е НА ТЕКУЩАТА СПИРКА
+            // =========================
             if (currentDistance <= 20) {
                 progress.reachedCurrentStop = true
             }
 
-            // САМО след като е бил на спирката
-            // и после се отдалечи с повече от 20 m
-            if (
-                progress.reachedCurrentStop &&
-                currentDistance > 20 &&
-                progress.currentIndex < route.stops.length - 1
+            // =====================================================
+            // GPS JUMP FIX
+            // Търсим най-близката спирка САМО НАПРЕД по маршрута.
+            // Така ако GPS прескочи 1-2 спирки, индексът също прескача.
+            // =====================================================
+
+            let nearestForwardIndex = currentIndex
+            let nearestForwardDistance = Infinity
+
+            for (
+                let i = currentIndex;
+                i < route.stops.length;
+                i++
             ) {
 
-                progress.currentIndex++
+                const stop = route.stops[i]
+
+                if (!stop?.geo?.coords) continue
+
+                const d = distance(
+                    lat,
+                    lon,
+                    stop.geo.coords[0],
+                    stop.geo.coords[1]
+                )
+
+                if (d < nearestForwardDistance) {
+                    nearestForwardDistance = d
+                    nearestForwardIndex = i
+                }
+            }
+
+            // =========================
+            // GPS Е ПРЕСКОЧИЛ СПИРКИ
+            // =========================
+            if (nearestForwardIndex > currentIndex) {
+
+                progress.currentIndex =
+                    nearestForwardIndex
+
+                progress.reachedCurrentStop =
+                    nearestForwardDistance <= 20
+
+            }
+
+            // =========================
+            // НОРМАЛНО НАПУСКАНЕ
+            // =========================
+            else if (
+                progress.reachedCurrentStop &&
+                currentDistance > 20 &&
+                currentIndex < route.stops.length - 1
+            ) {
+
+                progress.currentIndex =
+                    currentIndex + 1
 
                 progress.reachedCurrentStop = false
             }
@@ -538,7 +590,8 @@ if (route?.stops?.length) {
         progress
     )
 
-    nextStopIndex = progress.currentIndex
+    nextStopIndex =
+        progress.currentIndex
 
     nextStop =
         route.stops[nextStopIndex]
@@ -546,7 +599,6 @@ if (route?.stops?.length) {
     // =========================
     // REAL ETA
     // =========================
-
     if (nextStop?.geo?.coords) {
 
         const distanceToNext = distance(
@@ -569,7 +621,9 @@ if (route?.stops?.length) {
             eta =
                 Math.max(
                     1,
-                    Math.round(etaSeconds / 60)
+                    Math.round(
+                        etaSeconds / 60
+                    )
                 )
 
             etaTime =
