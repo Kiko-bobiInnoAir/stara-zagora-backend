@@ -612,65 +612,62 @@ if (route?.stops?.length) {
         }
     }
 }
-    vehicleId,
-    lat,
-    lon,
-    eta,
+       return res.json({
+        vehicleId,
+        lat,
+        lon,
+        eta,
 
-    scheduledStart:
-        tripData?.time?.scheduled || 0,
+        scheduledStart:
+            tripData?.time?.scheduled || 0,
 
-    actualStart:
-        tripData?.time?.actual || 0,
+        actualStart:
+            tripData?.time?.actual || 0,
 
-    direction:
-        tripData?.trip?.headsign ||
-        tripData?.trip?.direction ||
-        arrivalData?.destination?.bg ||
-        "",
+        direction:
+            tripData?.trip?.headsign ||
+            tripData?.trip?.direction ||
+            arrivalData?.destination?.bg ||
+            "",
 
-   nextStop: nextStop?.name || null,
-nextStopIndex,
-etaTime,
+        nextStop: nextStop?.name || null,
+        nextStopIndex,
+        etaTime,
 
-delay: tripData?.delay ?? 0,
+        delay: tripData?.delay ?? 0,
 
-    delay: tripData?.delay ?? 0,
+        lineId: lineNumber,
 
-    lineId: lineNumber,
+        stops:
+            route?.stops?.length
+                ? route.stops
+                : (tripData?.trip?.stops || []).map(s => {
 
-   stops:
-    route?.stops?.length
-        ? route.stops
-        : (tripData?.trip?.stops || []).map(s => {
+                    const full = stopsById[s.id]
 
-            const full = stopsById[s.id]
+                    return {
 
-            return {
+                        id: s.id,
 
-                id: s.id,
+                        name:
+                            full?.name?.bg ||
+                            full?.name ||
+                            s.name,
 
-                name:
-                    full?.name?.bg ||
-                    full?.name ||
-                    s.name,
+                        geo: full?.geo,
 
-                geo: full?.geo,
+                        scheduledTime: s.scheduled || 0
+                    }
 
-                scheduledTime: s.scheduled || 0
-            }
+                }),
 
-        }),
-
-    shape: route?.shape || []
-
-})
+        shape: route?.shape || []
+    })
 
     } catch (e) {
         console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
-    }
-})
+    }    
 // =======================
 // START
 // =======================
