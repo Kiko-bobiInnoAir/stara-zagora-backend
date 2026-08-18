@@ -36,10 +36,32 @@ const lockedVehicles = {}
 const lastKnownPositions = {}
 const speedCache = {}
 
+const tripCache = {}
+const TRIP_CACHE_TTL = 30000
+
+function getCachedTrip(vehicleId) {
+    const cached = tripCache[vehicleId]
+
+    if (!cached) return null
+
+    if (Date.now() - cached.time > TRIP_CACHE_TTL) {
+        delete tripCache[vehicleId]
+        return null
+    }
+
+    return cached.data
+}
+
 // =======================
 // TRIP CACHE
 // =======================
 async function getTripSafe(vehicleId) {
+
+    const cached = getCachedTrip(vehicleId)
+
+    if (cached) {
+        return cached
+    }
 
     try {
 
@@ -51,13 +73,21 @@ async function getTripSafe(vehicleId) {
             return null
         }
 
-        return await res.json()
+        const data = await res.json()
+
+        tripCache[vehicleId] = {
+            time: Date.now(),
+            data: data
+        }
+
+        return data
 
     } catch (e) {
 
         console.log("Trip error:", e.message)
         return null
     }
+
 }
 
 // =======================
@@ -122,7 +152,7 @@ while (true) {
         }
     } catch {}
 
-    await delay(350)
+    await delay(500)
 }
 
 
@@ -430,13 +460,16 @@ console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
-    let nextStop = null
+   let nextStop = null
+let nextStopIndex = -1
 
 if (route?.stops?.length) {
 
-    let progress = vehicleProgress.get(vehicleId)
+    const progressKey = `${vehicleId}:${tripId}`
 
-    // Първо стартиране
+    let progress = vehicleProgress.get(progressKey)
+
+    // Първо отваряне на този курс
     if (!progress) {
 
         let nearestIndex = 0
@@ -462,15 +495,16 @@ if (route?.stops?.length) {
         }
 
         progress = {
-            currentIndex: nearestIndex
+            currentIndex: nearestIndex,
+            reachedCurrentStop: nearestDistance <= 20
         }
 
     } else {
 
-        const current = route.stops[progress.currentIndex]
-        const next = route.stops[progress.currentIndex + 1]
+        const current =
+            route.stops[progress.currentIndex]
 
-        if (current?.geo?.coords && next?.geo?.coords) {
+        if (current?.geo?.coords) {
 
             const currentDistance = distance(
                 lat,
@@ -479,29 +513,105 @@ if (route?.stops?.length) {
                 current.geo.coords[1]
             )
 
-            const nextDistance = distance(
-                lat,
-                lon,
-                next.geo.coords[0],
-                next.geo.coords[1]
-            )
+            // Автобусът е стигнал текущата спирка
+            if (currentDistance <= 20) {
+                progress.reachedCurrentStop = true
+            }
 
-            // Минава към следващата само когато следващата вече е по-близо
+            // САМО след като е бил на спирката
+            // и после се отдалечи с повече от 20 m
             if (
-                nextDistance + 500 < currentDistance &&
+                progress.reachedCurrentStop &&
+                currentDistance > 20 &&
                 progress.currentIndex < route.stops.length - 1
             ) {
+
                 progress.currentIndex++
+
+                progress.reachedCurrentStop = false
             }
         }
     }
 
-    vehicleProgress.set(vehicleId, progress)
+    vehicleProgress.set(
+        progressKey,
+        progress
+    )
 
-    nextStop = route.stops[progress.currentIndex]
+    nextStopIndex = progress.currentIndex
+
+    nextStop =
+        route.stops[nextStopIndex]
+
+    // =========================
+    // REAL ETA
+    // =========================
+
+    if (nextStop?.geo?.coords) {
+
+        const distanceToNext = distance(
+            lat,
+            lon,
+            nextStop.geo.coords[0],
+            nextStop.geo.coords[1]
+        )
+
+        if (distanceToNext <= 20) {
+
+            eta = 0
+            etaTime = now
+
+        } else if (speed > 0.5) {
+
+            const etaSeconds =
+                distanceToNext / speed
+
+            eta =
+                Math.max(
+                    1,
+                    Math.round(etaSeconds / 60)
+                )
+
+            etaTime =
+                now +
+                Math.round(
+                    etaSeconds * 1000
+                )
+
+        } else {
+
+            const scheduled =
+                Number(
+                    nextStop.scheduledTime || 0
+                )
+
+            const expected =
+                scheduled > 0
+                    ? scheduled +
+                      (tripData?.delay ?? 0)
+                    : 0
+
+            if (expected > now) {
+
+                eta =
+                    Math.max(
+                        1,
+                        Math.round(
+                            (expected - now) /
+                            60000
+                        )
+                    )
+
+                etaTime = expected
+
+            } else {
+
+                eta = 0
+                etaTime = now
+            }
+        }
+    }
 }
-
-   return res.json({
     vehicleId,
     lat,
     lon,
@@ -519,7 +629,11 @@ if (route?.stops?.length) {
         arrivalData?.destination?.bg ||
         "",
 
-    nextStop: nextStop?.name || null,
+   nextStop: nextStop?.name || null,
+nextStopIndex,
+etaTime,
+
+delay: tripData?.delay ?? 0,
 
     delay: tripData?.delay ?? 0,
 
