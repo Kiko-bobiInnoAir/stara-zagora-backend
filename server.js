@@ -664,13 +664,14 @@ if (route?.stops?.length) {
         shape: route?.shape || []
     })
 
-    } catch (e) {
+        } catch (e) {
         console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
-    }    
+    }
+})
+
 // =======================
 // START
-// =======================
 app.listen(PORT, () => {
 console.log("Server running on port " + PORT)
 })
