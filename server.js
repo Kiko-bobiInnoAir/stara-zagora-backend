@@ -200,6 +200,12 @@ async function processQueue() {
 
             if (res.ok) {
                 const data = await res.json()
+
+                console.log(
+                    `🔎 RAW virtual-board ${stopId}:`,
+                    JSON.stringify(data).slice(0, 3000)
+                )
+
                 departures = data.departures || []
                 arrivalsCache[stopId] = departures
                 console.log(`✅ Fetch arrivals: ${stopId} (${departures.length})`)
