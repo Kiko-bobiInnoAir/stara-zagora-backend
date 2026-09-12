@@ -5,16 +5,15 @@ const vehicleProgress = new Map()
 let routes = {}
 
 try {
-
-    routes = JSON.parse(
-        fs.readFileSync("./routes.json", "utf8")
-    )
-
-    console.log("✅ Routes loaded")
-
+    if (fs.existsSync("./routes.json")) {
+        routes = JSON.parse(fs.readFileSync("./routes.json", "utf8")) || {}
+        console.log("✅ Routes loaded from routes.json")
+    } else {
+        console.log("ℹ️ routes.json not found - routes will be built from live data")
+    }
 } catch (e) {
-
-    console.log("⚠️ routes.json missing")
+    console.log("⚠️ routes.json could not be loaded:", e.message)
+    routes = {}
 }
 
 const app = express()
@@ -104,7 +103,19 @@ const data = await res.json()
     linesById = {}
     for (const l of data.lines || []) {
         linesById[l.id] = l
+
+        // If routes.json is missing, still expose every real line to Android.
+        // Full stop sequences are filled later when a live trip is requested.
+        if (!routes[l.id]) {
+            routes[l.id] = {
+                name: l.name || String(l.id),
+                stops: [],
+                shape: []
+            }
+        }
     }
+
+    console.log(`✅ Loaded ${stopsCache.length} stops and ${Object.keys(linesById).length} lines`)
 
 } catch (e) {
     console.log("Stops error")
@@ -184,17 +195,19 @@ async function processQueue() {
         let departures = arrivalsCache[stopId] || []
 
         try {
+            console.log(`➡️ Fetch arrivals: ${stopId}`)
             const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
 
             if (res.ok) {
                 const data = await res.json()
                 departures = data.departures || []
                 arrivalsCache[stopId] = departures
+                console.log(`✅ Fetch arrivals: ${stopId} (${departures.length})`)
             } else {
-                console.log(`Arrivals ${stopId}: HTTP ${res.status}`)
+                console.log(`❌ Arrivals ${stopId}: HTTP ${res.status}`)
             }
         } catch (e) {
-            console.log(`Arrivals ${stopId}: ${e.message}`)
+            console.log(`❌ Arrivals ${stopId}: ${e.message}`)
         }
 
         resolveArrivalWaiters(stopId, departures)
@@ -298,11 +311,14 @@ app.get("/arrivals/:stopId", async (req, res) => {
         return res.json(arrivalsCache[stopId])
     }
 
-    // First request for this stop: fetch it with priority instead of
-    // making the user wait behind the background queue.
+    // Register the waiter BEFORE enqueueing. This prevents a fast upstream
+    // response from being resolved before the waiter exists.
+    const pending = waitForArrivals(stopId, 8000)
+    console.log(`📍 Arrivals requested: ${stopId}`)
     enqueue(stopId, true)
 
-    const departures = await waitForArrivals(stopId, 8000)
+    const departures = await pending
+    console.log(`📍 Arrivals response: ${stopId} (${departures.length})`)
     return res.json(departures)
 })
 
