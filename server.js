@@ -36,19 +36,18 @@ const lockedVehicles = {}
 const lastKnownPositions = {}
 const speedCache = {}
 
+// Cache trip data so /liveTracking does not call livetransport.eu
+// on every 3-second Android refresh.
 const tripCache = {}
 const TRIP_CACHE_TTL = 30000
 
 function getCachedTrip(vehicleId) {
     const cached = tripCache[vehicleId]
-
     if (!cached) return null
-
     if (Date.now() - cached.time > TRIP_CACHE_TTL) {
         delete tripCache[vehicleId]
         return null
     }
-
     return cached.data
 }
 
@@ -58,10 +57,7 @@ function getCachedTrip(vehicleId) {
 async function getTripSafe(vehicleId) {
 
     const cached = getCachedTrip(vehicleId)
-
-    if (cached) {
-        return cached
-    }
+    if (cached) return cached
 
     try {
 
@@ -77,7 +73,7 @@ async function getTripSafe(vehicleId) {
 
         tripCache[vehicleId] = {
             time: Date.now(),
-            data: data
+            data
         }
 
         return data
@@ -87,7 +83,6 @@ async function getTripSafe(vehicleId) {
         console.log("Trip error:", e.message)
         return null
     }
-
 }
 
 // =======================
@@ -122,40 +117,93 @@ const data = await res.json()
 // QUEUE
 // =======================
 const requestQueue = []
+const priorityQueue = []
+const arrivalWaiters = new Map()
 let isProcessing = false
 
-function enqueue(stopId) {
-if (!requestQueue.includes(stopId)) {
-requestQueue.push(stopId)
+// Normal background requests go to requestQueue.
+// A stop requested by a user goes to priorityQueue so it is fetched first.
+function enqueue(stopId, priority = false) {
+    const queue = priority ? priorityQueue : requestQueue
+
+    if (!queue.includes(stopId)) {
+        queue.push(stopId)
+    }
 }
+
+function waitForArrivals(stopId, timeoutMs = 8000) {
+    return new Promise(resolve => {
+        if (!arrivalWaiters.has(stopId)) {
+            arrivalWaiters.set(stopId, [])
+        }
+
+        const waiters = arrivalWaiters.get(stopId)
+        let settled = false
+
+        const finish = data => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            resolve(data)
+        }
+
+        waiters.push(finish)
+
+        const timer = setTimeout(() => {
+            finish(arrivalsCache[stopId] || [])
+        }, timeoutMs)
+    })
+}
+
+function resolveArrivalWaiters(stopId, data) {
+    const waiters = arrivalWaiters.get(stopId)
+    if (!waiters) return
+
+    arrivalWaiters.delete(stopId)
+    for (const resolve of waiters) {
+        resolve(data)
+    }
 }
 
 async function processQueue() {
-if (isProcessing) return
-isProcessing = true
+    if (isProcessing) return
+    isProcessing = true
 
+    while (true) {
+        const stopId = priorityQueue.length
+            ? priorityQueue.shift()
+            : requestQueue.length
+                ? requestQueue.shift()
+                : null
 
-while (true) {
-
-    if (!requestQueue.length) {
-        await delay(200)
-        continue
-    }
-
-    const stopId = requestQueue.shift()
-
-    try {
-        const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
-        if (res.ok) {
-            const data = await res.json()
-            arrivalsCache[stopId] = data.departures || []
+        if (!stopId) {
+            await delay(200)
+            continue
         }
-    } catch {}
 
-    await delay(500)
-}
+        let departures = arrivalsCache[stopId] || []
 
+        try {
+            const res = await fetch(`${API}/virtual-board/${stopId}?limit=20`)
 
+            if (res.ok) {
+                const data = await res.json()
+                departures = data.departures || []
+                arrivalsCache[stopId] = departures
+            } else {
+                console.log(`Arrivals ${stopId}: HTTP ${res.status}`)
+            }
+        } catch (e) {
+            console.log(`Arrivals ${stopId}: ${e.message}`)
+        }
+
+        resolveArrivalWaiters(stopId, departures)
+
+        // Keep the existing 500 ms safety gap: about 120 requests/minute
+        // for the background arrivals queue, leaving headroom under the
+        // upstream 180 requests/minute limit.
+        await delay(500)
+    }
 }
 
 // =======================
@@ -242,17 +290,20 @@ app.get("/stops", (req, res) => {
 res.json(stopsCache)
 })
 
-app.get("/arrivals/:stopId", (req, res) => {
-const stopId = req.params.stopId
+app.get("/arrivals/:stopId", async (req, res) => {
+    const stopId = req.params.stopId
 
+    // If we already have data, return it immediately.
+    if (arrivalsCache[stopId] !== undefined) {
+        return res.json(arrivalsCache[stopId])
+    }
 
-if (!arrivalsCache[stopId]) enqueue(stopId)
+    // First request for this stop: fetch it with priority instead of
+    // making the user wait behind the background queue.
+    enqueue(stopId, true)
 
-res.json(arrivalsCache[stopId] || [])
-
-
-
-
+    const departures = await waitForArrivals(stopId, 8000)
+    return res.json(departures)
 })
 
 app.get("/vehicles", (req, res) => {
@@ -373,11 +424,9 @@ app.get("/liveTracking", async (req, res) => {
 
         speedCache[vehicleId] = { lat, lon, time: now }
 
+        // ETA is calculated after we know the actual next stop.
         let eta = 0
-
-if (speed > 0.5) {
-    eta = Math.max(1, Math.round(60 / speed))
-}
+        let etaTime = now
 
         const tripData = await getTripSafe(vehicleId)
 console.log(JSON.stringify(tripData, null, 2))
@@ -460,83 +509,24 @@ console.log("route last =", route?.stops?.at(-1)?.name)
         // =======================
         // ✅ NEXT STOP FIX (важно)
         // =======================
- 
-let nextStop = null
-let nextStopIndex = -1
+        let nextStop = null
+    let nextStopIndex = -1
 
-if (route?.stops?.length) {
+    if (route?.stops?.length) {
 
-    const progressKey = `${vehicleId}:${tripId}`
+        // Progress belongs to the selected trip, not only to the vehicle.
+        // This prevents an old route from being reused when the same bus
+        // starts another trip/line.
+        const progressKey = `${vehicleId}:${tripId}`
+        let progress = vehicleProgress.get(progressKey)
 
-    let progress = vehicleProgress.get(progressKey)
+        // First start: choose the stop nearest to the vehicle.
+        if (!progress) {
 
-    // =========================
-    // ПЪРВО ОТВАРЯНЕ НА КУРСА
-    // =========================
-    if (!progress) {
+            let nearestIndex = 0
+            let nearestDistance = Infinity
 
-        let nearestIndex = 0
-        let nearestDistance = Infinity
-
-        for (let i = 0; i < route.stops.length; i++) {
-
-            const stop = route.stops[i]
-
-            if (!stop?.geo?.coords) continue
-
-            const d = distance(
-                lat,
-                lon,
-                stop.geo.coords[0],
-                stop.geo.coords[1]
-            )
-
-            if (d < nearestDistance) {
-                nearestDistance = d
-                nearestIndex = i
-            }
-        }
-
-        progress = {
-            currentIndex: nearestIndex,
-            reachedCurrentStop: nearestDistance <= 20
-        }
-
-    } else {
-
-        const currentIndex = progress.currentIndex
-        const current = route.stops[currentIndex]
-
-        if (current?.geo?.coords) {
-
-            const currentDistance = distance(
-                lat,
-                lon,
-                current.geo.coords[0],
-                current.geo.coords[1]
-            )
-
-            // =========================
-            // СТИГНАЛ Е НА ТЕКУЩАТА СПИРКА
-            // =========================
-            if (currentDistance <= 20) {
-                progress.reachedCurrentStop = true
-            }
-
-            // =====================================================
-            // GPS JUMP FIX
-            // Търсим най-близката спирка САМО НАПРЕД по маршрута.
-            // Така ако GPS прескочи 1-2 спирки, индексът също прескача.
-            // =====================================================
-
-            let nearestForwardIndex = currentIndex
-            let nearestForwardDistance = Infinity
-
-            for (
-                let i = currentIndex;
-                i < route.stops.length;
-                i++
-            ) {
+            for (let i = 0; i < route.stops.length; i++) {
 
                 const stop = route.stops[i]
 
@@ -549,183 +539,156 @@ if (route?.stops?.length) {
                     stop.geo.coords[1]
                 )
 
-                if (d < nearestForwardDistance) {
-                    nearestForwardDistance = d
-                    nearestForwardIndex = i
+                if (d < nearestDistance) {
+                    nearestDistance = d
+                    nearestIndex = i
                 }
             }
 
-            // =========================
-            // GPS Е ПРЕСКОЧИЛ СПИРКИ
-            // =========================
-            if (nearestForwardIndex > currentIndex) {
-
-                progress.currentIndex =
-                    nearestForwardIndex
-
-                progress.reachedCurrentStop =
-                    nearestForwardDistance <= 20
-
+            progress = {
+                currentIndex: nearestIndex,
+                reachedCurrentStop: nearestDistance <= 20
             }
-
-            // =========================
-            // НОРМАЛНО НАПУСКАНЕ
-            // =========================
-            else if (
-                progress.reachedCurrentStop &&
-                currentDistance > 20 &&
-                currentIndex < route.stops.length - 1
-            ) {
-
-                progress.currentIndex =
-                    currentIndex + 1
-
-                progress.reachedCurrentStop = false
-            }
-        }
-    }
-
-    vehicleProgress.set(
-        progressKey,
-        progress
-    )
-
-    nextStopIndex =
-        progress.currentIndex
-
-    nextStop =
-        route.stops[nextStopIndex]
-
-    // =========================
-    // REAL ETA
-    // =========================
-    if (nextStop?.geo?.coords) {
-
-        const distanceToNext = distance(
-            lat,
-            lon,
-            nextStop.geo.coords[0],
-            nextStop.geo.coords[1]
-        )
-
-        if (distanceToNext <= 20) {
-
-            eta = 0
-            etaTime = now
-
-        } else if (speed > 0.5) {
-
-            const etaSeconds =
-                distanceToNext / speed
-
-            eta =
-                Math.max(
-                    1,
-                    Math.round(
-                        etaSeconds / 60
-                    )
-                )
-
-            etaTime =
-                now +
-                Math.round(
-                    etaSeconds * 1000
-                )
 
         } else {
 
-            const scheduled =
-                Number(
-                    nextStop.scheduledTime || 0
+            const current = route.stops[progress.currentIndex]
+
+            if (current?.geo?.coords) {
+
+                const currentDistance = distance(
+                    lat,
+                    lon,
+                    current.geo.coords[0],
+                    current.geo.coords[1]
                 )
 
-            const expected =
-                scheduled > 0
-                    ? scheduled +
-                      (tripData?.delay ?? 0)
-                    : 0
+                // The bus has reached the current stop.
+                if (currentDistance <= 20) {
+                    progress.reachedCurrentStop = true
+                }
 
-            if (expected > now) {
+                // Only after the bus has actually reached the stop and
+                // then moved more than 20 m away do we advance.
+                if (
+                    progress.reachedCurrentStop &&
+                    currentDistance > 20 &&
+                    progress.currentIndex < route.stops.length - 1
+                ) {
+                    progress.currentIndex++
+                    progress.reachedCurrentStop = false
+                }
+            }
+        }
 
-                eta =
-                    Math.max(
-                        1,
-                        Math.round(
-                            (expected - now) /
-                            60000
-                        )
-                    )
+        vehicleProgress.set(progressKey, progress)
 
-                etaTime = expected
+        nextStopIndex = progress.currentIndex
+        nextStop = route.stops[nextStopIndex]
 
-            } else {
+        // Real ETA to the actual next stop.
+        if (nextStop?.geo?.coords) {
+
+            const distanceToNext = distance(
+                lat,
+                lon,
+                nextStop.geo.coords[0],
+                nextStop.geo.coords[1]
+            )
+
+            if (distanceToNext <= 20) {
 
                 eta = 0
                 etaTime = now
+
+            } else if (speed > 0.5) {
+
+                const etaSeconds = distanceToNext / speed
+                eta = Math.max(1, Math.round(etaSeconds / 60))
+                etaTime = now + Math.round(etaSeconds * 1000)
+
+            } else {
+
+                const scheduled = Number(nextStop.scheduledTime || 0)
+                const expected = scheduled > 0
+                    ? scheduled + (tripData?.delay ?? 0)
+                    : 0
+
+                if (expected > now) {
+                    eta = Math.max(
+                        1,
+                        Math.round((expected - now) / 60000)
+                    )
+                    etaTime = expected
+                } else {
+                    eta = 0
+                    etaTime = now
+                }
             }
         }
     }
-}
-       return res.json({
-        vehicleId,
-        lat,
-        lon,
-        eta,
 
-        scheduledStart:
-            tripData?.time?.scheduled || 0,
+return res.json({
+    vehicleId,
+    lat,
+    lon,
+    eta,
 
-        actualStart:
-            tripData?.time?.actual || 0,
+    scheduledStart:
+        tripData?.time?.scheduled || 0,
 
-        direction:
-            tripData?.trip?.headsign ||
-            tripData?.trip?.direction ||
-            arrivalData?.destination?.bg ||
-            "",
+    actualStart:
+        tripData?.time?.actual || 0,
 
-        nextStop: nextStop?.name || null,
-        nextStopIndex,
-        etaTime,
+    direction:
+        tripData?.trip?.headsign ||
+        tripData?.trip?.direction ||
+        arrivalData?.destination?.bg ||
+        "",
 
-        delay: tripData?.delay ?? 0,
+    nextStop: nextStop?.name || null,
+    nextStopIndex,
+    etaTime,
 
-        lineId: lineNumber,
+    delay: tripData?.delay ?? 0,
 
-        stops:
-            route?.stops?.length
-                ? route.stops
-                : (tripData?.trip?.stops || []).map(s => {
+    lineId: lineNumber,
 
-                    const full = stopsById[s.id]
+   stops:
+    route?.stops?.length
+        ? route.stops
+        : (tripData?.trip?.stops || []).map(s => {
 
-                    return {
+            const full = stopsById[s.id]
 
-                        id: s.id,
+            return {
 
-                        name:
-                            full?.name?.bg ||
-                            full?.name ||
-                            s.name,
+                id: s.id,
 
-                        geo: full?.geo,
+                name:
+                    full?.name?.bg ||
+                    full?.name ||
+                    s.name,
 
-                        scheduledTime: s.scheduled || 0
-                    }
+                geo: full?.geo,
 
-                }),
+                scheduledTime: s.scheduled || 0
+            }
 
-        shape: route?.shape || []
-    })
+        }),
 
-        } catch (e) {
+    shape: route?.shape || []
+
+})
+
+    } catch (e) {
         console.log("Live error:", e.message)
         res.json({ error: "Internal error" })
     }
 })
-
 // =======================
 // START
+// =======================
 app.listen(PORT, () => {
 console.log("Server running on port " + PORT)
 })
