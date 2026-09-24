@@ -6,6 +6,7 @@ let routes = {}
 
 try {
 
+    
     routes = JSON.parse(
         fs.readFileSync("./routes.json", "utf8")
     )
