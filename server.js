@@ -189,8 +189,22 @@ ws.on("open", () => {
 
 ws.on("message", (msg) => {
     try {
-        vehiclesCache = JSON.parse(msg)
-    } catch {}
+        const parsed = JSON.parse(msg)
+
+        if (Array.isArray(parsed)) {
+            vehiclesCache = parsed
+        } else if (Array.isArray(parsed?.data)) {
+            vehiclesCache = parsed.data
+        } else if (Array.isArray(parsed?.vehicles)) {
+            vehiclesCache = parsed.vehicles
+        } else {
+            vehiclesCache = Object.values(parsed || {})
+                .filter(v => Array.isArray(v))
+        }
+
+    } catch (e) {
+        console.log("WS parse error:", e.message)
+    }
 })
 
 ws.on("close", () => {
@@ -337,9 +351,17 @@ app.get("/liveTracking", async (req, res) => {
 
         const clean = vehicleId.split("/").pop()
 
-        const vehicle = vehiclesCache.find(v =>
-            (v[0] || "").split("/").pop() === clean
-        )
+        const vehicleList = Array.isArray(vehiclesCache)
+    ? vehiclesCache
+    : Object.values(vehiclesCache || {})
+
+const vehicle = vehicleList.find(v => {
+    if (!Array.isArray(v)) return false
+
+    return String(v[0] || "")
+        .split("/")
+        .pop() === clean
+})
 
         let lat, lon
 
