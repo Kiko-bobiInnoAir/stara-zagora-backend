@@ -322,12 +322,87 @@ app.get("/routesHtml", (req, res) => {
 app.get("/liveTracking", async (req, res) => {
 
     const tripId = req.query.tripId
-    if (!tripId) return res.json({ error: "Missing tripId" })
+    const requestedVehicleId = req.query.vehicleId
+
+    if (!tripId && !requestedVehicleId) {
+        return res.json({
+            error: "Missing tripId or vehicleId"
+        })
+    }
 
     try {
 
-        let vehicleId = lockedVehicles[tripId]
+        let vehicleId =
+            requestedVehicleId ||
+            lockedVehicles[tripId]
+
         let arrivalData = null
+
+        // ==========================================
+        // 🔥 ако е избрано превозно средство
+        // директно го намираме по vehicle ID
+        // ==========================================
+
+        if (!vehicleId) {
+
+            for (const stopId in arrivalsCache) {
+
+                for (const a of arrivalsCache[stopId]) {
+
+                    if (
+                        a.vehicleId &&
+                        a.vehicleId.split("/").pop() ===
+                        requestedVehicleId
+                    ) {
+
+                        arrivalData = a
+
+                        vehicleId = a.vehicleId
+
+                        break
+                    }
+                }
+
+                if (vehicleId) break
+            }
+        }
+
+        // ==========================================
+        // старият механизъм по tripId остава
+        // ==========================================
+
+        if (!vehicleId && tripId) {
+
+            for (const stopId in arrivalsCache) {
+
+                for (const a of arrivalsCache[stopId]) {
+
+                    if (a.tripId === tripId) {
+
+                        arrivalData = a
+
+                        if (a.vehicleId) {
+
+                            vehicleId = a.vehicleId
+
+                            lockedVehicles[tripId] =
+                                vehicleId
+                        }
+
+                        break
+                    }
+                }
+
+                if (arrivalData) break
+            }
+        }
+
+        if (!vehicleId) {
+
+            return res.json({
+                error: "Vehicle not found yet"
+            })
+        }
 
         for (const stopId in arrivalsCache) {
             for (const a of arrivalsCache[stopId]) {
