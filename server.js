@@ -869,15 +869,15 @@ async function updateTrainStationCache() {
             const puppeteer =
                 require("puppeteer")
 
-            trainBrowser =
-                await puppeteer.launch({
-                    headless: true,
-                    args: [
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage"
-                    ]
-                })
+           trainBrowser = await puppeteer.launch({
+    headless: true,
+    executablePath: "/opt/render/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome",
+    args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+    ]
+});
         }
 
         const page =
