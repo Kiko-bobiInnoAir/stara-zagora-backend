@@ -728,6 +728,247 @@ return res.json({
         res.json({ error: "Internal error" })
     }
 })
+
+// =======================
+// BDZ TRAIN STATION
+// =======================
+
+const TRAIN_REFRESH_MS = 60 * 1000
+
+let trainStationCache = {
+    updatedAt: 0,
+    nextUpdateAt: 0,
+    departures: [],
+    arrivals: [],
+    lastError: null
+}
+
+let trainBrowser = null
+let trainUpdateRunning = false
+
+function parseBDZBoardText(text) {
+
+    const lines = text
+        .split(/\r?\n/)
+        .map(x => x.trim())
+        .filter(Boolean)
+
+    const trains = []
+
+    for (let i = 0; i < lines.length; i++) {
+
+        const time = lines[i]
+
+        if (!/^\d{1,2}:\d{2}$/.test(time)) {
+            continue
+        }
+
+        const values = []
+
+        for (
+            let j = i + 1;
+            j < lines.length && values.length < 12;
+            j++
+        ) {
+
+            const value = lines[j]
+
+            if (/^\d{1,2}:\d{2}$/.test(value)) {
+                break
+            }
+
+            if (
+                value === "*" ||
+                value === "Заминаващи" ||
+                value === "Пристигащи" ||
+                value === "Електронно табло" ||
+                value === "Стара Загора" ||
+                value === "LIVE"
+            ) {
+                continue
+            }
+
+            values.push(value)
+        }
+
+        const trainNumber = values.find(value =>
+            /^(МБВ|БВ|ПВ|КПВ)\s+\d+$/.test(value)
+        )
+
+        if (!trainNumber) {
+            continue
+        }
+
+        const platform =
+            values.find(value =>
+                value.includes("Коловоз")
+            ) || ""
+
+        const delay =
+            values.find(value =>
+                value.includes("Закъснение")
+            ) || ""
+
+        const destination =
+            values.find(value =>
+                value !== trainNumber &&
+                !value.includes("Коловоз") &&
+                !value.includes("Закъснение") &&
+                value.length > 1
+            ) || ""
+
+        trains.push({
+            time,
+            destination,
+            trainNumber,
+            platform,
+            delay
+        })
+    }
+
+    return trains
+}
+
+async function getBDZBoard(page, type) {
+
+    const url =
+        `https://live.bdz.bg/bg/stara-zagora/${type}`
+
+    await page.goto(
+        url,
+        {
+            waitUntil: "networkidle2",
+            timeout: 30000
+        }
+    )
+
+    await new Promise(resolve =>
+        setTimeout(resolve, 1500)
+    )
+
+    const text =
+        await page.evaluate(() =>
+            document.body.innerText || ""
+        )
+
+    return parseBDZBoardText(text)
+}
+
+async function updateTrainStationCache() {
+
+    if (trainUpdateRunning) {
+        return
+    }
+
+    trainUpdateRunning = true
+
+    try {
+
+        if (!trainBrowser) {
+
+            const puppeteer =
+                require("puppeteer")
+
+            trainBrowser =
+                await puppeteer.launch({
+                    headless: true,
+                    args: [
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage"
+                    ]
+                })
+        }
+
+        const page =
+            await trainBrowser.newPage()
+
+        await page.setViewport({
+            width: 1280,
+            height: 1200
+        })
+
+        const departures =
+            await getBDZBoard(
+                page,
+                "departures"
+            )
+
+        const arrivals =
+            await getBDZBoard(
+                page,
+                "arrivals"
+            )
+
+        await page.close()
+
+        const now =
+            Date.now()
+
+        trainStationCache = {
+            updatedAt: now,
+            nextUpdateAt:
+                now + TRAIN_REFRESH_MS,
+            departures,
+            arrivals,
+            lastError: null
+        }
+
+        console.log(
+            `🚆 BDZ updated: ${departures.length} departures, ${arrivals.length} arrivals`
+        )
+
+    } catch (e) {
+
+        console.log(
+            "🚆 BDZ error:",
+            e.message
+        )
+
+        trainStationCache.lastError =
+            e.message
+
+        trainStationCache.nextUpdateAt =
+            Date.now() + TRAIN_REFRESH_MS
+
+    } finally {
+
+        trainUpdateRunning = false
+    }
+}
+
+app.get("/trainStation", (req, res) => {
+
+    res.json({
+        updatedAt:
+            trainStationCache.updatedAt,
+
+        nextUpdateAt:
+            trainStationCache.nextUpdateAt,
+
+        departures:
+            trainStationCache.departures,
+
+        arrivals:
+            trainStationCache.arrivals,
+
+        error:
+            trainStationCache.lastError || null
+    })
+})
+
+// Първоначално зареждане
+updateTrainStationCache()
+
+// Обновяване на всеки 60 секунди
+setInterval(
+    updateTrainStationCache,
+    TRAIN_REFRESH_MS
+)
+
+// END BDZ TRAIN STATION
+
+
 // =======================
 // START
 // =======================
