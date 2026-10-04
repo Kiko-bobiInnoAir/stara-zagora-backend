@@ -1,3 +1,5 @@
+process.env.PUPPETEER_CACHE_DIR = "./.puppeteer-cache"
+
 const fs = require("fs")
 const express = require("express")
 const WebSocket = require("ws")
