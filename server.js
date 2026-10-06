@@ -752,110 +752,284 @@ function parseBDZBoardText(text) {
 
     const lines = text
         .split(/\r?\n/)
-        .map(x => x.trim())
+        .map(v => v.trim())
         .filter(Boolean)
 
     const trains = []
 
+    const timeRegex = /^\d{1,2}:\d{2}$/
+    const trainRegex = /^(МБВ|БВ|ПВ|КПВ)\s+\d+$/
+
+    let consumedTimeIndex = -1
+
     for (let i = 0; i < lines.length; i++) {
 
-        const time = lines[i]
-
-        if (!/^\d{1,2}:\d{2}$/.test(time)) {
+        /*
+         * Ако този час вече е използван като
+         * НОВ ПЛАНИРАН ЧАС на предишния влак,
+         * не го обработваме отново като нов влак.
+         */
+        if (i <= consumedTimeIndex) {
             continue
         }
 
+        const plannedTime = lines[i]
+
+        if (!timeRegex.test(plannedTime)) {
+            continue
+        }
+
+        /*
+         * По подразбиране няма нов планиран час.
+         */
+        let newPlannedTime = ""
+
+        /*
+         * Започваме да четем данните след първия час.
+         */
+        let startIndex = i + 1
+
+        /*
+         * АКО СЛЕД ПЛАНИРАНИЯ ЧАС ИМА ВТОРИ ЧАС:
+         *
+         * 02:09
+         * 02:12
+         * ВАРНА
+         * БВ 8657
+         * 4
+         * Закъснение 3 мин.
+         *
+         * тогава:
+         *
+         * plannedTime    = 02:09
+         * newPlannedTime = 02:12
+         *
+         * 02:12 НЕ е текущ час.
+         */
+        if (
+            i + 1 < lines.length &&
+            timeRegex.test(lines[i + 1])
+        ) {
+
+            newPlannedTime = lines[i + 1]
+
+            /*
+             * Запомняме, че този втори час вече
+             * е използван и не трябва да стане
+             * начало на нов влак.
+             */
+            consumedTimeIndex = i + 1
+
+            startIndex = i + 2
+        }
+
+        /*
+         * Събираме данните за конкретния влак.
+         */
         const values = []
 
         for (
-            let j = i + 1;
-            j < lines.length && values.length < 12;
+            let j = startIndex;
+            j < lines.length && values.length < 15;
             j++
         ) {
 
             const value = lines[j]
 
-            if (/^\d{1,2}:\d{2}$/.test(value)) {
+            /*
+             * Следващият час означава начало
+             * на следващ влак.
+             */
+            if (timeRegex.test(value)) {
                 break
             }
 
+            const lower = value.toLowerCase()
+
+            /*
+             * Премахваме елементи от самото табло,
+             * които не са данни за влака.
+             */
             if (
-                value === "*" ||
-                value === "Заминаващи" ||
-                value === "Пристигащи" ||
-                value === "Електронно табло" ||
-                value === "Стара Загора" ||
-                value === "LIVE"
+                lower === "заминаващи" ||
+                lower === "пристигащи" ||
+                lower === "електронно табло" ||
+                lower === "стара загора" ||
+                lower === "live"
             ) {
+                continue
+            }
+
+            if (value === "*") {
                 continue
             }
 
             values.push(value)
         }
 
-        const trainNumber = values.find(value =>
-            /^(МБВ|БВ|ПВ|КПВ)\s+\d+$/.test(value)
+        /*
+         * Търсим номера на влака.
+         */
+        const trainIndex = values.findIndex(
+            value => trainRegex.test(value)
         )
 
-        if (!trainNumber) {
+        if (trainIndex === -1) {
             continue
         }
 
-       const trainIndex = values.indexOf(trainNumber)
+        const trainNumber = values[trainIndex]
 
-let platform = ""
+        /*
+         * ДЕСТИНАЦИЯ
+         *
+         * Обикновено е непосредствено преди
+         * номера на влака.
+         *
+         * Например:
+         *
+         * ВАРНА
+         * БВ 8657
+         */
+        let destination = ""
 
-if (trainIndex >= 0) {
+        for (let j = trainIndex - 1; j >= 0; j--) {
 
-    const afterTrain =
-        values.slice(trainIndex + 1)
+            const value = values[j]
 
-    const platformValue =
-        afterTrain.find(value =>
-            /^коловоз\s+\d+$/i.test(value) ||
-            /^\d{1,2}$/.test(value)
+            if (!value) {
+                continue
+            }
+
+            if (
+                value.toLowerCase().includes("закъснение")
+            ) {
+                continue
+            }
+
+            if (
+                /^коловоз\s+\d{1,2}$/i.test(value)
+            ) {
+                continue
+            }
+
+            if (
+                /^\d{1,2}$/.test(value)
+            ) {
+                continue
+            }
+
+            destination = value
+            break
+        }
+
+        /*
+         * КОЛОВОЗ
+         *
+         * БДЖ може да върне:
+         *
+         * Коловоз 4
+         *
+         * или само:
+         *
+         * 4
+         */
+        let platform = ""
+
+        for (
+            let j = trainIndex + 1;
+            j < values.length;
+            j++
+        ) {
+
+            const value = values[j]
+
+            if (
+                /^коловоз\s+\d{1,2}$/i.test(value)
+            ) {
+
+                platform = value
+                break
+            }
+
+            if (
+                /^\d{1,2}$/.test(value)
+            ) {
+
+                platform = `Коловоз ${value}`
+                break
+            }
+        }
+
+        /*
+         * ЗАКЪСНЕНИЕ
+         */
+        let delay = ""
+
+        const delayValue = values.find(value =>
+            value.toLowerCase().includes("закъснение")
         )
 
-    if (platformValue) {
+        if (delayValue) {
 
-        if (
-            /^коловоз\s+/i.test(
-                platformValue
-            )
-        ) {
-            platform = platformValue
-        } else {
-            platform =
-                `Коловоз ${platformValue}`
+            const match =
+                delayValue.match(/(\d+)\s*мин/i)
+
+            if (match) {
+
+                delay = `${match[1]} мин.`
+
+            } else {
+
+                delay = delayValue
+            }
         }
-    }
-}
 
-        const delay =
-            values.find(value =>
-                value.includes("Закъснение")
-            ) || ""
-
-        const destination =
-            values.find(value =>
-                value !== trainNumber &&
-                !value.includes("Коловоз") &&
-                !value.includes("Закъснение") &&
-                value.length > 1
-            ) || ""
-
+        /*
+         * ВАЖНО:
+         *
+         * "time" оставяме като първоначалния
+         * планиран час, за да не счупим
+         * съществуващия Android код.
+         *
+         * "newPlannedTime" е новият планиран час
+         * след закъснението.
+         */
         trains.push({
-            time,
-            destination,
-            trainNumber,
-            platform,
-            delay
+
+            time: plannedTime,
+
+            plannedTime: plannedTime,
+
+            newPlannedTime: newPlannedTime,
+
+            destination: destination,
+
+            trainNumber: trainNumber,
+
+            platform: platform,
+
+            delay: delay
         })
     }
 
-    return trains
-}
+    /*
+     * Премахваме евентуални дублирани влакове.
+     */
+    return trains.filter((train, index, array) =>
 
+        index === array.findIndex(other =>
+
+            other.plannedTime === train.plannedTime &&
+
+            other.newPlannedTime === train.newPlannedTime &&
+
+            other.trainNumber === train.trainNumber &&
+
+            other.destination === train.destination
+        )
+    )
+}
 async function getBDZBoard(page, type) {
 
     const url =
