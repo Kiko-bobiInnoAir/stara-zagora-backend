@@ -1264,9 +1264,7 @@ for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
 processQueue()
 connectWS()
 
-// ЖП гара
-refreshTrainStation()
-setInterval(refreshTrainStation, TRAIN_REFRESH_MS)
+
 
 // Автогара
 refreshBusStation()
