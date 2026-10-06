@@ -801,10 +801,35 @@ function parseBDZBoardText(text) {
             continue
         }
 
-        const platform =
-            values.find(value =>
-                value.includes("Коловоз")
-            ) || ""
+       const trainIndex = values.indexOf(trainNumber)
+
+let platform = ""
+
+if (trainIndex >= 0) {
+
+    const afterTrain =
+        values.slice(trainIndex + 1)
+
+    const platformValue =
+        afterTrain.find(value =>
+            /^коловоз\s+\d+$/i.test(value) ||
+            /^\d{1,2}$/.test(value)
+        )
+
+    if (platformValue) {
+
+        if (
+            /^коловоз\s+/i.test(
+                platformValue
+            )
+        ) {
+            platform = platformValue
+        } else {
+            platform =
+                `Коловоз ${platformValue}`
+        }
+    }
+}
 
         const delay =
             values.find(value =>
