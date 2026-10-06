@@ -1101,35 +1101,79 @@ async function getBDZBoard(page, type) {
         .slice(0, 10)
 })
 
+const debugDelayed = await page.evaluate(() => {
+
+    const delayElements = Array.from(
+        document.querySelectorAll("p")
+    ).filter(el =>
+        (el.innerText || "")
+            .toLowerCase()
+            .includes("закъснение")
+    )
+
+    return delayElements.slice(0, 10).map(el => {
+
+        const result = []
+
+        let current = el
+
+        /*
+         * Качваме се максимум 6 нива нагоре.
+         * Търсим родителя, който съдържа
+         * цялата информация за влака.
+         */
+        for (let level = 0; level < 6 && current; level++) {
+
+            result.push({
+                level,
+                tag: current.tagName,
+                className:
+                    typeof current.className === "string"
+                        ? current.className
+                        : "",
+                text:
+                    (current.innerText || "")
+                        .trim()
+                        .replace(/\n/g, " | "),
+                html:
+                    current.outerHTML
+            })
+
+            current = current.parentElement
+        }
+
+        return result
+    })
+})
+
 console.log(
-    "========== BDZ DELAYED HTML =========="
+    "========== BDZ DELAY TREE =========="
 )
 
-for (const item of debugHtml) {
+for (const train of debugDelayed) {
 
-    console.log(
-        `TAG: ${item.tag}`
-    )
+    for (const item of train) {
 
-    console.log(
-        `CLASS: ${item.className}`
-    )
+        console.log(
+            `LEVEL ${item.level} | TAG ${item.tag} | CLASS ${item.className}`
+        )
 
-    console.log(
-        `TEXT: ${item.text.replace(/\n/g, " | ")}`
-    )
+        console.log(
+            `TEXT: ${item.text}`
+        )
 
-    console.log(
-        `HTML: ${item.html}`
-    )
+        console.log(
+            `HTML: ${item.html}`
+        )
 
-    console.log(
-        "--------------------------------------"
-    )
+        console.log(
+            "--------------------------------------"
+        )
+    }
 }
 
 console.log(
-    "========== END BDZ DELAYED HTML =========="
+    "========== END BDZ DELAY TREE =========="
 )
 
 // DEBUG – показва какво реално получава сървърът от БДЖ
