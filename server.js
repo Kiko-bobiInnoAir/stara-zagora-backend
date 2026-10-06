@@ -1051,6 +1051,86 @@ async function getBDZBoard(page, type) {
     await page.evaluate(() =>
         document.body.innerText || ""
     )
+    const debugHtml = await page.evaluate(() => {
+
+    const result = []
+
+    const elements = Array.from(
+        document.querySelectorAll("*")
+    )
+
+    for (const element of elements) {
+
+        const text =
+            (element.innerText || "").trim()
+
+        if (!text) continue
+
+        if (
+            text.includes("Закъснение") &&
+            text.length < 500
+        ) {
+
+            result.push({
+                tag: element.tagName,
+                className:
+                    typeof element.className === "string"
+                        ? element.className
+                        : "",
+                text,
+                html: element.outerHTML
+            })
+        }
+    }
+
+    /*
+     * Премахваме дублираните/вложените елементи.
+     * Оставяме само най-малките полезни блокове.
+     */
+    return result
+        .filter((item, index, array) => {
+
+            return !array.some(
+                (other, otherIndex) =>
+                    otherIndex !== index &&
+                    other.text !== item.text &&
+                    other.text.length < item.text.length &&
+                    item.text.includes(other.text)
+            )
+        })
+        .slice(0, 10)
+})
+
+console.log(
+    "========== BDZ DELAYED HTML =========="
+)
+
+for (const item of debugHtml) {
+
+    console.log(
+        `TAG: ${item.tag}`
+    )
+
+    console.log(
+        `CLASS: ${item.className}`
+    )
+
+    console.log(
+        `TEXT: ${item.text.replace(/\n/g, " | ")}`
+    )
+
+    console.log(
+        `HTML: ${item.html}`
+    )
+
+    console.log(
+        "--------------------------------------"
+    )
+}
+
+console.log(
+    "========== END BDZ DELAYED HTML =========="
+)
 
 // DEBUG – показва какво реално получава сървърът от БДЖ
 const debugLines = text
