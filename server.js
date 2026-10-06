@@ -971,6 +971,282 @@ setInterval(
 
 
 // =======================
+// BUS STATION - STARA ZAGORA
+// =======================
+
+const BUS_REFRESH_MS = 60 * 1000
+
+let busStationCache = {
+    departures: [],
+    arrivals: [],
+    updatedAt: 0,
+    nextUpdateAt: 0,
+    lastError: ""
+}
+
+let busRefreshRunning = false
+
+
+function parseBusStationText(text) {
+
+    const lines = text
+        .split(/\r?\n/)
+        .map(v => v.trim())
+        .filter(Boolean)
+
+    const buses = []
+
+    const timeRegex = /^\d{1,2}:\d{2}$/
+    const rangeRegex = /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/
+
+    for (let i = 0; i < lines.length; i++) {
+
+        if (lines[i].toLowerCase() !== "час") {
+            continue
+        }
+
+        const time = lines[i + 1]
+
+        if (!time || !timeRegex.test(time)) {
+            continue
+        }
+
+        const block = []
+
+        let j = i + 2
+
+        while (
+            j < lines.length &&
+            lines[j].toLowerCase() !== "час"
+        ) {
+            block.push(lines[j])
+            j++
+        }
+
+        const titleIndex = block.findIndex(value =>
+            /^СТАРА ЗАГОРА\s*-\s*/i.test(value)
+        )
+
+        if (titleIndex === -1) {
+            continue
+        }
+
+        const title = block[titleIndex]
+
+        const destination = title
+            .replace(/^СТАРА ЗАГОРА\s*-\s*/i, "")
+            .trim()
+
+        const operator =
+            block[titleIndex + 1] || ""
+
+        const days =
+            block.find(value =>
+                /^(Пн|Вт|Ср|Чт|Пт|Сб|Нд)(,\s*(Пн|Вт|Ср|Чт|Пт|Сб|Нд))*$/i
+                    .test(value)
+            ) || ""
+
+        const sector =
+            block.find(value =>
+                /^Сектор\s*:/i.test(value)
+            ) || ""
+
+        const price =
+            block.find(value =>
+                /€.*лв\./i.test(value)
+            ) || ""
+
+        const routeTimes =
+            block.filter(value =>
+                rangeRegex.test(value)
+            )
+
+        const route = []
+
+        let currentRange = null
+
+        for (let k = 0; k < block.length; k++) {
+
+            const value = block[k]
+
+            if (rangeRegex.test(value)) {
+                currentRange = value
+                continue
+            }
+
+            if (!currentRange) {
+                continue
+            }
+
+            if (
+                value === "*" ||
+                value === "* * *"
+            ) {
+                continue
+            }
+
+            const nextValue = block[k + 1]
+
+            if (
+                nextValue &&
+                !rangeRegex.test(nextValue) &&
+                nextValue !== "*"
+            ) {
+
+                route.push({
+                    time: currentRange,
+                    from: value,
+                    to: nextValue
+                })
+
+                currentRange = null
+                k++
+            }
+        }
+
+        buses.push({
+            time,
+            destination,
+            operator,
+            days,
+            sector,
+            price,
+            route
+        })
+
+        i = j - 1
+    }
+
+    return buses
+        .filter((bus, index, array) =>
+            index === array.findIndex(other =>
+                other.time === bus.time &&
+                other.destination === bus.destination &&
+                other.operator === bus.operator
+            )
+        )
+}
+
+
+async function scrapeBusStation() {
+
+    const browser = await getTrainBrowser()
+    const page = await browser.newPage()
+
+    try {
+
+        await page.setUserAgent(
+            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/130 Safari/537.36"
+        )
+
+        await page.setViewport({
+            width: 1280,
+            height: 1600
+        })
+
+        await page.goto(
+            "https://avtogara.starazagora.bg/bg/busstations/",
+            {
+                waitUntil: "networkidle2",
+                timeout: 30000
+            }
+        )
+
+        await new Promise(resolve =>
+            setTimeout(resolve, 1500)
+        )
+
+        const text =
+            await page.evaluate(() =>
+                document.body.innerText || ""
+            )
+
+        return parseBusStationText(text)
+
+    } finally {
+
+        await page.close()
+
+    }
+}
+
+
+async function refreshBusStation() {
+
+    if (busRefreshRunning) {
+        return
+    }
+
+    busRefreshRunning = true
+
+    try {
+
+        const departures =
+            await scrapeBusStation()
+
+        const now = Date.now()
+
+        busStationCache = {
+            departures,
+            arrivals: [],
+            updatedAt: now,
+            nextUpdateAt:
+                now + BUS_REFRESH_MS,
+            lastError: ""
+        }
+
+        console.log(
+            `🚌 Bus station updated: ${departures.length} departures`
+        )
+
+    } catch (e) {
+
+        console.log(
+            "🚌 Bus station refresh error:",
+            e.message
+        )
+
+        busStationCache.lastError =
+            e.message
+
+        busStationCache.nextUpdateAt =
+            Date.now() + BUS_REFRESH_MS
+
+    } finally {
+
+        busRefreshRunning = false
+
+    }
+}
+
+
+app.get("/busStation", (req, res) => {
+
+    res.json({
+        updatedAt:
+            busStationCache.updatedAt,
+
+        nextUpdateAt:
+            busStationCache.nextUpdateAt,
+
+        departures:
+            busStationCache.departures,
+
+        arrivals:
+            busStationCache.arrivals,
+
+        error:
+            busStationCache.lastError || null
+    })
+
+})
+
+// =======================
+// END BUS STATION
+// =======================
+
+
+// =======================
 // START
 // =======================
 app.listen(PORT, () => {
@@ -987,6 +1263,15 @@ for (let i = 0; i < Math.min(stopsCache.length, 50); i++) {
 
 processQueue()
 connectWS()
+
+// ЖП гара
+refreshTrainStation()
+setInterval(refreshTrainStation, TRAIN_REFRESH_MS)
+
+// Автогара
+refreshBusStation()
+setInterval(refreshBusStation, BUS_REFRESH_MS)
+    
 
 setInterval(loadArrivals, 5000)
 setInterval(loadStops, 5 * 60 * 1000)
