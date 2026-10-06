@@ -1127,10 +1127,31 @@ function parseBusStationText(text) {
         )
 }
 
+let busBrowser = null
+
+async function getBusBrowser() {
+
+    if (busBrowser) {
+        return busBrowser
+    }
+
+    const puppeteer = require("puppeteer")
+
+    busBrowser = await puppeteer.launch({
+        headless: true,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage"
+        ]
+    })
+
+    return busBrowser
+}
 
 async function scrapeBusStation() {
 
-    const browser = await getTrainBrowser()
+    const browser = await getBusBrowser()
     const page = await browser.newPage()
 
     try {
