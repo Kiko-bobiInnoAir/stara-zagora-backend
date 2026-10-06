@@ -1047,12 +1047,35 @@ async function getBDZBoard(page, type) {
         setTimeout(resolve, 1500)
     )
 
-    const text =
-        await page.evaluate(() =>
-            document.body.innerText || ""
-        )
+  const text =
+    await page.evaluate(() =>
+        document.body.innerText || ""
+    )
 
-    return parseBDZBoardText(text)
+// DEBUG – показва какво реално получава сървърът от БДЖ
+const debugLines = text
+    .split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(Boolean)
+
+console.log(`========== BDZ ${type.toUpperCase()} RAW DATA ==========`)
+
+for (let i = 0; i < debugLines.length; i++) {
+
+    if (/^\d{1,2}:\d{2}$/.test(debugLines[i])) {
+
+        console.log(
+            `[${i}]`,
+            debugLines
+                .slice(i, i + 8)
+                .join(" | ")
+        )
+    }
+}
+
+console.log(`========== END BDZ ${type.toUpperCase()} ==========`)
+
+return parseBDZBoardText(text)
 }
 
 async function updateTrainStationCache() {
