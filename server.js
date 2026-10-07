@@ -973,7 +973,7 @@ function parseBDZBoardText(text) {
         if (delayValue) {
 
             const match =
-                delayValue.match(/(\d+)\s*мин/i)
+                delayValue.match(/(\d+)\s*мин,закъснение/i)
 
             if (match) {
 
@@ -1167,7 +1167,7 @@ async function getBDZBoard(page, type) {
             // ЗАКЪСНЕНИЕ
             const delay =
                 delayValue > 0
-                    ? `${delayValue} мин.`
+                    ? `${delayValue} мин. закъснение`
                     : ""
 
             return {
