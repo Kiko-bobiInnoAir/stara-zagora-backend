@@ -1047,159 +1047,160 @@ async function getBDZBoard(page, type) {
         setTimeout(resolve, 1500)
     )
 
-  const text =
-    await page.evaluate(() =>
-        document.body.innerText || ""
-    )
-    const debugHtml = await page.evaluate(() => {
+    const trains = await page.evaluate(() => {
 
-    const result = []
-
-    const elements = Array.from(
-        document.querySelectorAll("*")
-    )
-
-    for (const element of elements) {
-
-        const text =
-            (element.innerText || "").trim()
-
-        if (!text) continue
-
-        if (
-            text.includes("Закъснение") &&
-            text.length < 500
-        ) {
-
-            result.push({
-                tag: element.tagName,
-                className:
-                    typeof element.className === "string"
-                        ? element.className
-                        : "",
-                text,
-                html: element.outerHTML
-            })
-        }
-    }
-
-    /*
-     * Премахваме дублираните/вложените елементи.
-     * Оставяме само най-малките полезни блокове.
-     */
-    return result
-        .filter((item, index, array) => {
-
-            return !array.some(
-                (other, otherIndex) =>
-                    otherIndex !== index &&
-                    other.text !== item.text &&
-                    other.text.length < item.text.length &&
-                    item.text.includes(other.text)
+        const items =
+            Array.from(
+                document.querySelectorAll(
+                    ".timetableItem[data-train]"
+                )
             )
-        })
-        .slice(0, 10)
-})
 
-const debugDelayed = await page.evaluate(() => {
+        return items.map(item => {
 
-    const delayElements = Array.from(
-        document.querySelectorAll("p")
-    ).filter(el =>
-        (el.innerText || "")
-            .toLowerCase()
-            .includes("закъснение")
-    )
+            const trainNumber =
+                item.getAttribute("data-train") || ""
 
-    return delayElements.slice(0, 10).map(el => {
+            const delayValue =
+                parseInt(
+                    item.getAttribute("data-delay") || "0",
+                    10
+                )
 
-        const result = []
+            // ЧАСОВЕТЕ
+            const timeCell =
+                item.querySelector(
+                    ".col-3.col-lg-2"
+                )
 
-        let current = el
-
-        /*
-         * Качваме се максимум 6 нива нагоре.
-         * Търсим родителя, който съдържа
-         * цялата информация за влака.
-         */
-        for (let level = 0; level < 6 && current; level++) {
-
-            result.push({
-                level,
-                tag: current.tagName,
-                className:
-                    typeof current.className === "string"
-                        ? current.className
-                        : "",
-                text:
-                    (current.innerText || "")
+            const timeText =
+                timeCell
+                    ? (timeCell.innerText || "")
                         .trim()
-                        .replace(/\n/g, " | "),
-                html:
-                    current.outerHTML
-            })
+                        .replace(/\s+/g, " ")
+                    : ""
 
-            current = current.parentElement
-        }
+            const times =
+                timeText.match(/\b\d{1,2}:\d{2}\b/g) || []
 
-        return result
+            let plannedTime = ""
+            let newPlannedTime = ""
+
+            const oldTimeElement =
+                timeCell
+                    ? timeCell.querySelector("s")
+                    : null
+
+            if (oldTimeElement) {
+
+                plannedTime =
+                    (oldTimeElement.innerText || "")
+                        .trim()
+
+                const remainingTimes =
+                    times.filter(
+                        time => time !== plannedTime
+                    )
+
+                if (remainingTimes.length > 0) {
+                    newPlannedTime =
+                        remainingTimes[0]
+                }
+
+            } else {
+
+                if (times.length > 0) {
+                    plannedTime = times[0]
+                }
+
+            }
+
+            // ДЕСТИНАЦИЯ
+            const destinationElement =
+                item.querySelector(
+                    ".col-9.col-lg-7 .col-12.col-lg-6 strong"
+                )
+
+            const destination =
+                destinationElement
+                    ? (destinationElement.innerText || "")
+                        .trim()
+                    : ""
+
+            // ВЛАК
+            const trainElement =
+                item.querySelector(
+                    '[data-original-title]'
+                )
+
+            const trainNumberText =
+                trainElement
+                    ? (trainElement.innerText || "")
+                        .trim()
+                        .replace(/\s+/g, " ")
+                    : ""
+
+            // КОЛОВОЗ
+            const platformElement =
+                item.querySelector(
+                    '[data-station-id]'
+                )
+
+            let platform = ""
+
+            if (platformElement) {
+
+                platform =
+                    (platformElement.innerText || "")
+                        .trim()
+                        .replace(/\s+/g, " ")
+
+                platform =
+                    platform
+                        .replace(
+                            /^Коловоз\s*/i,
+                            ""
+                        )
+                        .trim()
+            }
+
+            // ЗАКЪСНЕНИЕ
+            const delay =
+                delayValue > 0
+                    ? `${delayValue} мин.`
+                    : ""
+
+            return {
+
+                plannedTime,
+
+                newPlannedTime,
+
+                destination,
+
+                trainNumber:
+                    trainNumberText || trainNumber,
+
+                platform:
+                    platform
+                        ? `Коловоз ${platform}`
+                        : "",
+
+                delay,
+
+                // Съвместимост със сегашния Android
+                time:
+                    newPlannedTime || plannedTime
+            }
+
+        }).filter(train =>
+            train.plannedTime &&
+            train.destination &&
+            train.trainNumber
+        )
     })
-})
 
-console.log(
-    "========== BDZ DELAY TREE =========="
-)
-
-for (const train of debugDelayed) {
-
-    for (const item of train) {
-
-        console.log(
-            `LEVEL ${item.level} | TAG ${item.tag} | CLASS ${item.className}`
-        )
-
-        console.log(
-            `TEXT: ${item.text}`
-        )
-
-        console.log(
-            `HTML: ${item.html}`
-        )
-
-        console.log(
-            "--------------------------------------"
-        )
-    }
-}
-
-console.log(
-    "========== END BDZ DELAY TREE =========="
-)
-
-// DEBUG – показва какво реално получава сървърът от БДЖ
-const debugLines = text
-    .split(/\r?\n/)
-    .map(x => x.trim())
-    .filter(Boolean)
-
-console.log(`========== BDZ ${type.toUpperCase()} RAW DATA ==========`)
-
-for (let i = 0; i < debugLines.length; i++) {
-
-    if (/^\d{1,2}:\d{2}$/.test(debugLines[i])) {
-
-        console.log(
-            `[${i}]`,
-            debugLines
-                .slice(i, i + 8)
-                .join(" | ")
-        )
-    }
-}
-
-console.log(`========== END BDZ ${type.toUpperCase()} ==========`)
-
-return parseBDZBoardText(text)
+    return trains
 }
 
 async function updateTrainStationCache() {
