@@ -1204,84 +1204,83 @@ async function getBDZBoard(page, type) {
 }
 
 async function updateTrainStationCache() {
+    if (trainUpdateRunning) return;
 
-    if (trainUpdateRunning) {
-        return
-    }
+    trainUpdateRunning = true;
 
-    trainUpdateRunning = true
+    let page = null;
 
     try {
+        if (!trainBrowser || !trainBrowser.isConnected()) {
+            const puppeteer = require("puppeteer");
 
-        if (!trainBrowser) {
-
-            const puppeteer =
-                require("puppeteer")
-
-          trainBrowser = await puppeteer.launch({
-    headless: true,
-    args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-    ]
-});
+            trainBrowser = await puppeteer.launch({
+                headless: true,
+                args: [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage"
+                ]
+            });
         }
 
-        const page =
-            await trainBrowser.newPage()
+        page = await trainBrowser.newPage();
 
         await page.setViewport({
             width: 1280,
             height: 1200
-        })
+        });
 
-        const departures =
-            await getBDZBoard(
-                page,
-                "departures"
-            )
+        const departures = await getBDZBoard(
+            page,
+            "departures"
+        );
 
-        const arrivals =
-            await getBDZBoard(
-                page,
-                "arrivals"
-            )
+        const arrivals = await getBDZBoard(
+            page,
+            "arrivals"
+        );
 
-        await page.close()
-
-        const now =
-            Date.now()
+        const now = Date.now();
 
         trainStationCache = {
             updatedAt: now,
-            nextUpdateAt:
-                now + TRAIN_REFRESH_MS,
+            nextUpdateAt: now + TRAIN_REFRESH_MS,
             departures,
             arrivals,
             lastError: null
-        }
+        };
 
         console.log(
             `🚆 BDZ updated: ${departures.length} departures, ${arrivals.length} arrivals`
-        )
+        );
 
     } catch (e) {
-
         console.log(
             "🚆 BDZ error:",
             e.message
-        )
+        );
 
-        trainStationCache.lastError =
-            e.message
-
+        trainStationCache.lastError = e.message;
         trainStationCache.nextUpdateAt =
-            Date.now() + TRAIN_REFRESH_MS
+            Date.now() + TRAIN_REFRESH_MS;
 
     } finally {
+        // Страницата се затваря дори при грешка.
+        if (page) {
+            try {
+                if (!page.isClosed()) {
+                    await page.close();
+                }
+            } catch (closeError) {
+                console.log(
+                    "🚆 BDZ page close error:",
+                    closeError.message
+                );
+            }
+        }
 
-        trainUpdateRunning = false
+        trainUpdateRunning = false;
     }
 }
 
