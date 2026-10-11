@@ -473,8 +473,6 @@ const vehicle = vehicleList.find(v => {
         let etaTime = now
 
         const tripData = await getTripSafe(vehicleId)
-console.log(JSON.stringify(tripData, null, 2))
-
         // =======================
         // ✅ FIX ЛИНИЯ (94 вместо 22)
         // =======================
@@ -745,8 +743,51 @@ let trainStationCache = {
     lastError: null
 }
 
-let trainBrowser = null
 let trainUpdateRunning = false
+
+// Един общ Chromium процес за БДЖ и автогарата.
+let sharedBrowser = null
+let browserLaunchPromise = null
+
+async function getSharedBrowser() {
+    if (sharedBrowser && sharedBrowser.isConnected()) {
+        return sharedBrowser
+    }
+
+    // Не допускаме две едновременни стартирания.
+    if (browserLaunchPromise) {
+        return browserLaunchPromise
+    }
+
+    browserLaunchPromise = (async () => {
+        const puppeteer = require("puppeteer")
+
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ]
+        })
+
+        sharedBrowser = browser
+
+        browser.on("disconnected", () => {
+            if (sharedBrowser === browser) {
+                sharedBrowser = null
+            }
+        })
+
+        return browser
+    })()
+
+    try {
+        return await browserLaunchPromise
+    } finally {
+        browserLaunchPromise = null
+    }
+        }
 
 function parseBDZBoardText(text) {
 
@@ -1204,44 +1245,31 @@ async function getBDZBoard(page, type) {
 }
 
 async function updateTrainStationCache() {
-    if (trainUpdateRunning) return;
+    if (trainUpdateRunning) return
 
-    trainUpdateRunning = true;
-
-    let page = null;
+    trainUpdateRunning = true
+    let page = null
 
     try {
-        if (!trainBrowser || !trainBrowser.isConnected()) {
-            const puppeteer = require("puppeteer");
-
-            trainBrowser = await puppeteer.launch({
-                headless: true,
-                args: [
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage"
-                ]
-            });
-        }
-
-        page = await trainBrowser.newPage();
+        const browser = await getSharedBrowser()
+        page = await browser.newPage()
 
         await page.setViewport({
             width: 1280,
             height: 1200
-        });
+        })
 
         const departures = await getBDZBoard(
             page,
             "departures"
-        );
+        )
 
         const arrivals = await getBDZBoard(
             page,
             "arrivals"
-        );
+        )
 
-        const now = Date.now();
+        const now = Date.now()
 
         trainStationCache = {
             updatedAt: now,
@@ -1249,40 +1277,37 @@ async function updateTrainStationCache() {
             departures,
             arrivals,
             lastError: null
-        };
+        }
 
         console.log(
             `🚆 BDZ updated: ${departures.length} departures, ${arrivals.length} arrivals`
-        );
+        )
 
     } catch (e) {
-        console.log(
-            "🚆 BDZ error:",
-            e.message
-        );
+        console.log("🚆 BDZ error:", e.message)
 
-        trainStationCache.lastError = e.message;
+        trainStationCache.lastError = e.message
         trainStationCache.nextUpdateAt =
-            Date.now() + TRAIN_REFRESH_MS;
+            Date.now() + TRAIN_REFRESH_MS
 
     } finally {
-        // Страницата се затваря дори при грешка.
         if (page) {
             try {
                 if (!page.isClosed()) {
-                    await page.close();
+                    await page.close()
                 }
             } catch (closeError) {
                 console.log(
                     "🚆 BDZ page close error:",
                     closeError.message
-                );
+                )
             }
         }
 
-        trainUpdateRunning = false;
+        trainUpdateRunning = false
     }
 }
+
 
 app.get("/trainStation", (req, res) => {
 
@@ -1473,33 +1498,12 @@ function parseBusStationText(text) {
         )
 }
 
-let busBrowser = null
 
-async function getBusBrowser() {
-
-    if (busBrowser) {
-        return busBrowser
-    }
-
-    const puppeteer = require("puppeteer")
-
-    busBrowser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage"
-        ]
-    })
-
-    return busBrowser
-}
 
 async function scrapeBusStation() {
 
-    const browser = await getBusBrowser()
-    const page = await browser.newPage()
-
+    const browser = await getSharedBrowser()
+const page = await browser.newPage()
     try {
 
         await page.setUserAgent(
