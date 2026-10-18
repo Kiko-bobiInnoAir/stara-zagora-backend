@@ -1639,6 +1639,13 @@ const OVERPASS_ENDPOINTS = [
     "https://overpass.nchc.org.tw/api/interpreter"
 ]
 
+// Taxi-only endpoints: do not use the NCHC host that returned ENOTFOUND.
+const TAXI_OVERPASS_ENDPOINTS = [
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
+]
+
 // Charging-only fallback list. Keep the taxi endpoint list and taxi code unchanged.
 const CHARGING_OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -1807,7 +1814,7 @@ out center tags;
 
 async function fetchTaxiStationsFromOverpass() {
     let lastError = "No Overpass endpoint responded"
-    for (const endpoint of OVERPASS_ENDPOINTS) {
+    for (const endpoint of TAXI_OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 45000)
