@@ -1633,10 +1633,10 @@ const chargingStationsCache = {
 
 // Shared fallback list for both charging-station and taxi queries.
 const OVERPASS_ENDPOINTS = [
-    "https://overpass.private.coffee/api/interpreter",
+    // Primary public instance, followed by independent fallbacks.
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.nchc.org.tw/api/interpreter"
+    "https://overpass.private.coffee/api/interpreter"
 ]
 
 const CHARGING_QUERY = `
@@ -1650,7 +1650,7 @@ out center tags;
 `
 
 async function fetchChargingStationsFromOverpass() {
-    let lastError = "No Overpass endpoint responded"
+    const errors = []
 
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
@@ -1672,15 +1672,16 @@ async function fetchChargingStationsFromOverpass() {
             }
 
             if (!response.ok) {
-                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                console.warn("⚡ Charging stations:", lastError)
+                const endpointError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                errors.push(endpointError)
+                console.warn("⚡ Charging stations:", endpointError)
                 // A 429/502/503 is often temporary; try the next endpoint.
                 continue
             }
 
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
-                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
+                errors.push(`Invalid Overpass response (${new URL(endpoint).host})`)
                 continue
             }
 
@@ -1717,12 +1718,15 @@ async function fetchChargingStationsFromOverpass() {
 
             return stations
         } catch (e) {
-            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
-            console.warn("⚡ Overpass endpoint failed:", endpoint, lastError)
+            const endpointError = e.name === "AbortError"
+                ? `Overpass request timed out (${new URL(endpoint).host})`
+                : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
+            errors.push(endpointError)
+            console.warn("⚡ Overpass endpoint failed:", endpoint, endpointError)
         }
     }
 
-    throw new Error(lastError)
+    throw new Error(errors.join("; ") || "No Overpass endpoint responded")
 }
 
 async function refreshChargingStations() {
@@ -1797,7 +1801,7 @@ out center tags;
 `
 
 async function fetchTaxiStationsFromOverpass() {
-    let lastError = "No Overpass endpoint responded"
+    const errors = []
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
@@ -1817,13 +1821,14 @@ async function fetchTaxiStationsFromOverpass() {
                 clearTimeout(timeout)
             }
             if (!response.ok) {
-                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                console.warn("🚕 Taxi data:", lastError)
+                const endpointError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                errors.push(endpointError)
+                console.warn("🚕 Taxi data:", endpointError)
                 continue
             }
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
-                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
+                errors.push(`Invalid Overpass response (${new URL(endpoint).host})`)
                 continue
             }
             const seen = new Set()
@@ -1858,13 +1863,14 @@ async function fetchTaxiStationsFromOverpass() {
             }
             return stations
         } catch (e) {
-            lastError = e.name === "AbortError"
+            const endpointError = e.name === "AbortError"
                 ? `Overpass request timed out (${new URL(endpoint).host})`
                 : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
-            console.warn("🚕 Overpass endpoint failed:", endpoint, lastError)
+            errors.push(endpointError)
+            console.warn("🚕 Overpass endpoint failed:", endpoint, endpointError)
         }
     }
-    throw new Error(lastError)
+    throw new Error(errors.join("; ") || "No Overpass endpoint responded")
 }
 
 async function refreshTaxiStations() {
