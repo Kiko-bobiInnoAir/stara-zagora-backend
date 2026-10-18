@@ -1617,6 +1617,154 @@ app.get("/busStation", (req, res) => {
 // =======================
 
 
+
+// =======================
+// ELECTRIC CHARGING STATIONS (OpenStreetMap)
+// =======================
+// The Android app calls this server, not Overpass directly.
+// Successful data is cached; temporary Overpass errors never erase it.
+const CHARGING_REFRESH_MS = 12 * 60 * 60 * 1000 // 12 hours
+const chargingStationsCache = {
+    updatedAt: 0,
+    stations: [],
+    lastError: null,
+    refreshing: false
+}
+
+const OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
+]
+
+const CHARGING_QUERY = `
+[out:json][timeout:40];
+(
+  node["amenity"="charging_station"](42.34,25.54,42.51,25.76);
+  way["amenity"="charging_station"](42.34,25.54,42.51,25.76);
+  relation["amenity"="charging_station"](42.34,25.54,42.51,25.76);
+);
+out center tags;
+`
+
+async function fetchChargingStationsFromOverpass() {
+    let lastError = "No Overpass endpoint responded"
+
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 45000)
+            let response
+            try {
+                response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "User-Agent": "StaraZagoraSpeech/1.0 (charging stations map)"
+                    },
+                    body: "data=" + encodeURIComponent(CHARGING_QUERY),
+                    signal: controller.signal
+                })
+            } finally {
+                clearTimeout(timeout)
+            }
+
+            if (!response.ok) {
+                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                console.warn("⚡ Charging stations:", lastError)
+                // A 429/502/503 is often temporary; try the next endpoint.
+                continue
+            }
+
+            const payload = await response.json()
+            if (!Array.isArray(payload.elements)) {
+                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
+                continue
+            }
+
+            const stations = []
+            for (const item of payload.elements) {
+                const tags = item.tags || {}
+                const lat = Number(item.lat ?? item.center?.lat)
+                const lon = Number(item.lon ?? item.center?.lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+
+                const street = String(tags["addr:street"] || "").trim()
+                const house = String(tags["addr:housenumber"] || "").trim()
+                const city = String(tags["addr:city"] || "Стара Загора").trim()
+                const address = [street, house, city].filter(Boolean).join(" ")
+                const connectors = Object.fromEntries(
+                    Object.entries(tags).filter(([key]) => key.startsWith("socket:"))
+                )
+
+                stations.push({
+                    id: `${item.type}/${item.id}`,
+                    name: tags.name || tags.brand || tags.operator || "Зарядна станция",
+                    lat,
+                    lon,
+                    operator: tags.operator || tags.brand || tags.network || "Не е посочен",
+                    address: address || "Адресът не е посочен в картата",
+                    capacity: tags.capacity || "Не е посочен",
+                    connectors,
+                    power: tags["charging_station:output"] || "Не е посочена",
+                    access: tags.access || "Не е посочен",
+                    openingHours: tags.opening_hours || "Не са посочени",
+                    source: "OpenStreetMap"
+                })
+            }
+
+            return stations
+        } catch (e) {
+            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
+            console.warn("⚡ Overpass endpoint failed:", endpoint, lastError)
+        }
+    }
+
+    throw new Error(lastError)
+}
+
+async function refreshChargingStations() {
+    if (chargingStationsCache.refreshing) return
+    chargingStationsCache.refreshing = true
+
+    try {
+        const stations = await fetchChargingStationsFromOverpass()
+        // Only replace the cache after a successful, valid response.
+        chargingStationsCache.stations = stations
+        chargingStationsCache.updatedAt = Date.now()
+        chargingStationsCache.lastError = null
+        console.log(`⚡ Charging stations updated: ${stations.length}`)
+    } catch (e) {
+        chargingStationsCache.lastError = e.message
+        console.warn("⚡ Charging stations refresh failed; keeping previous cache:", e.message)
+    } finally {
+        chargingStationsCache.refreshing = false
+    }
+}
+
+app.get("/charging-stations", (req, res) => {
+    res.set("Cache-Control", "public, max-age=60")
+    res.json({
+        updatedAt: chargingStationsCache.updatedAt,
+        nextUpdateAt: chargingStationsCache.updatedAt
+            ? chargingStationsCache.updatedAt + CHARGING_REFRESH_MS
+            : 0,
+        stale: !chargingStationsCache.updatedAt ||
+            Date.now() - chargingStationsCache.updatedAt > CHARGING_REFRESH_MS,
+        refreshing: chargingStationsCache.refreshing,
+        error: chargingStationsCache.lastError,
+        stations: chargingStationsCache.stations
+    })
+})
+
+// One initial refresh and then at most one scheduled refresh every 12 hours.
+refreshChargingStations()
+setInterval(refreshChargingStations, CHARGING_REFRESH_MS)
+
+// =======================
+// END ELECTRIC CHARGING STATIONS
+// =======================
+
+
 // =======================
 // START
 // =======================
@@ -1649,4 +1797,3 @@ setInterval(loadStops, 5 * 60 * 1000)
 }
 
 startServer()
-
