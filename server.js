@@ -1631,25 +1631,19 @@ const chargingStationsCache = {
     refreshing: false
 }
 
-// Public Overpass instances. If one is down or rejects the query,
-// the next one is tried automatically. This does not affect the bus API.
 const OVERPASS_ENDPOINTS = [
-    "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.nchc.org.tw/api/interpreter"
+    "https://overpass.kumi.systems/api/interpreter"
 ]
 
 const CHARGING_QUERY = `
 [out:json][timeout:50];
 (
-  // Wider area around Stara Zagora, including outskirts and nearby roads.
-  nwr["amenity"="charging_station"](42.25,25.43,42.62,25.91);
-  // Some mappers use socket tags without amenity=charging_station.
-  nwr["socket:type2"](42.25,25.43,42.62,25.91);
-  nwr["socket:ccs"](42.25,25.43,42.62,25.91);
-  nwr["socket:chademo"](42.25,25.43,42.62,25.91);
-  nwr["charging_station"="yes"](42.25,25.43,42.62,25.91);
+  nwr["amenity"="charging_station"](42.30,25.48,42.56,25.82);
+  nwr["socket:type2"](42.30,25.48,42.56,25.82);
+  nwr["socket:ccs"](42.30,25.48,42.56,25.82);
+  nwr["socket:chademo"](42.30,25.48,42.56,25.82);
+  nwr["amenity"="fuel"]["socket:type2"](42.30,25.48,42.56,25.82);
 );
 out center tags;
 `
@@ -1690,8 +1684,12 @@ async function fetchChargingStationsFromOverpass() {
             }
 
             const stations = []
+            const seenStationIds = new Set()
             for (const item of payload.elements) {
                 const tags = item.tags || {}
+                const stationId = `${item.type}/${item.id}`
+                if (seenStationIds.has(stationId)) continue
+                seenStationIds.add(stationId)
                 const lat = Number(item.lat ?? item.center?.lat)
                 const lon = Number(item.lon ?? item.center?.lon)
                 if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
@@ -1705,7 +1703,7 @@ async function fetchChargingStationsFromOverpass() {
                 )
 
                 stations.push({
-                    id: `${item.type}/${item.id}`,
+                    id: stationId,
                     name: tags.name || tags.brand || tags.operator || "Зарядна станция",
                     lat,
                     lon,
@@ -1713,7 +1711,7 @@ async function fetchChargingStationsFromOverpass() {
                     address: address || "Адресът не е посочен в картата",
                     capacity: tags.capacity || "Не е посочен",
                     connectors,
-                    power: tags["charging_station:output"] || "Не е посочена",
+                    power: tags["charging_station:output"] || tags["socket:output"] || tags["maxpower"] || "Не е посочена",
                     access: tags.access || "Не е посочен",
                     openingHours: tags.opening_hours || "Не са посочени",
                     source: "OpenStreetMap"
@@ -1722,9 +1720,7 @@ async function fetchChargingStationsFromOverpass() {
 
             return stations
         } catch (e) {
-            lastError = e.name === "AbortError"
-                ? `Overpass request timed out (${new URL(endpoint).host})`
-                : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
+            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
             console.warn("⚡ Overpass endpoint failed:", endpoint, lastError)
         }
     }
@@ -1776,11 +1772,12 @@ setInterval(refreshChargingStations, CHARGING_REFRESH_MS)
 
 
 
+
 // =======================
 // TAXI STANDS AND COMPANIES (OpenStreetMap)
 // =======================
-// Cached on this backend so Android clients do not query Overpass directly.
-const TAXI_REFRESH_MS = 12 * 60 * 60 * 1000 // 12 hours
+// Separate cache and endpoint; no impact on the transport API or its request limit.
+const TAXI_REFRESH_MS = 12 * 60 * 60 * 1000
 const taxiStationsCache = {
     updatedAt: 0,
     stations: [],
@@ -1791,14 +1788,10 @@ const taxiStationsCache = {
 const TAXI_QUERY = `
 [out:json][timeout:50];
 (
-  // Taxi stands and taxi offices.
-  nwr["amenity"="taxi"](42.25,25.43,42.62,25.91);
-  nwr["office"="taxi"](42.25,25.43,42.62,25.91);
-  nwr["taxi"="yes"](42.25,25.43,42.62,25.91);
-  // Also find mapped taxi businesses whose name/brand says taxi/такси.
-  nwr["name"~"такси|taxi",i](42.25,25.43,42.62,25.91);
-  nwr["brand"~"такси|taxi",i](42.25,25.43,42.62,25.91);
-  nwr["operator"~"такси|taxi",i](42.25,25.43,42.62,25.91);
+  nwr["amenity"="taxi"](42.30,25.48,42.56,25.82);
+  nwr["office"="taxi"](42.30,25.48,42.56,25.82);
+  nwr["taxi"="yes"](42.30,25.48,42.56,25.82);
+  nwr["name"~"такси|taxi|cab",i](42.30,25.48,42.56,25.82);
 );
 out center tags;
 `
@@ -1808,7 +1801,7 @@ async function fetchTaxiStationsFromOverpass() {
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 45000)
+            const timeout = setTimeout(() => controller.abort(), 55000)
             let response
             try {
                 response = await fetch(endpoint, {
@@ -1837,12 +1830,12 @@ async function fetchTaxiStationsFromOverpass() {
             const stations = []
             for (const item of payload.elements) {
                 const tags = item.tags || {}
-                const lat = Number(item.lat ?? item.center?.lat)
-                const lon = Number(item.lon ?? item.center?.lon)
-                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
                 const id = `${item.type}/${item.id}`
                 if (seen.has(id)) continue
                 seen.add(id)
+                const lat = Number(item.lat ?? item.center?.lat)
+                const lon = Number(item.lon ?? item.center?.lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
                 const street = String(tags["addr:street"] || "").trim()
                 const house = String(tags["addr:housenumber"] || "").trim()
                 const city = String(tags["addr:city"] || "Стара Загора").trim()
@@ -1850,10 +1843,7 @@ async function fetchTaxiStationsFromOverpass() {
                 const name = String(tags.name || tags.brand || tags.operator ||
                     (tags.amenity === "taxi" ? "Таксиметрова стоянка" : "Таксиметрова фирма")).trim()
                 stations.push({
-                    id,
-                    name,
-                    lat,
-                    lon,
+                    id, name, lat, lon,
                     operator: String(tags.operator || tags.brand || "").trim(),
                     address: address || String(tags["addr:full"] || "Адресът не е посочен в картата").trim(),
                     phone: String(tags.phone || tags["contact:phone"] || tags["contact:mobile"] || "").trim(),
