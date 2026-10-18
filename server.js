@@ -1634,26 +1634,28 @@ const chargingStationsCache = {
 // Public Overpass instances. If one is down or rejects the query,
 // the next one is tried automatically. This does not affect the bus API.
 const OVERPASS_ENDPOINTS = [
-    // Primary public instances; if one is unavailable, the next is tried.
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-    "https://overpass.osm.ch/api/interpreter"
+    "https://overpass.nchc.org.tw/api/interpreter"
 ]
 
 const CHARGING_QUERY = `
-[out:json][timeout:40];
+[out:json][timeout:50];
 (
-  node["amenity"="charging_station"](42.34,25.54,42.51,25.76);
-  way["amenity"="charging_station"](42.34,25.54,42.51,25.76);
-  relation["amenity"="charging_station"](42.34,25.54,42.51,25.76);
+  // Wider area around Stara Zagora, including outskirts and nearby roads.
+  nwr["amenity"="charging_station"](42.25,25.43,42.62,25.91);
+  // Some mappers use socket tags without amenity=charging_station.
+  nwr["socket:type2"](42.25,25.43,42.62,25.91);
+  nwr["socket:ccs"](42.25,25.43,42.62,25.91);
+  nwr["socket:chademo"](42.25,25.43,42.62,25.91);
+  nwr["charging_station"="yes"](42.25,25.43,42.62,25.91);
 );
 out center tags;
 `
 
 async function fetchChargingStationsFromOverpass() {
     let lastError = "No Overpass endpoint responded"
-    const endpointErrors = []
 
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
@@ -1676,7 +1678,6 @@ async function fetchChargingStationsFromOverpass() {
 
             if (!response.ok) {
                 lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                endpointErrors.push(lastError)
                 console.warn("⚡ Charging stations:", lastError)
                 // A 429/502/503 is often temporary; try the next endpoint.
                 continue
@@ -1685,7 +1686,6 @@ async function fetchChargingStationsFromOverpass() {
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
                 lastError = `Invalid Overpass response (${new URL(endpoint).host})`
-                endpointErrors.push(lastError)
                 continue
             }
 
@@ -1725,12 +1725,11 @@ async function fetchChargingStationsFromOverpass() {
             lastError = e.name === "AbortError"
                 ? `Overpass request timed out (${new URL(endpoint).host})`
                 : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
-            endpointErrors.push(lastError)
             console.warn("⚡ Overpass endpoint failed:", endpoint, lastError)
         }
     }
 
-    throw new Error(endpointErrors.length ? endpointErrors.join("; ") : lastError)
+    throw new Error(lastError)
 }
 
 async function refreshChargingStations() {
@@ -1790,24 +1789,22 @@ const taxiStationsCache = {
 }
 
 const TAXI_QUERY = `
-[out:json][timeout:40];
+[out:json][timeout:50];
 (
-  node["amenity"="taxi"](42.34,25.54,42.51,25.76);
-  way["amenity"="taxi"](42.34,25.54,42.51,25.76);
-  relation["amenity"="taxi"](42.34,25.54,42.51,25.76);
-  node["office"="taxi"](42.34,25.54,42.51,25.76);
-  way["office"="taxi"](42.34,25.54,42.51,25.76);
-  relation["office"="taxi"](42.34,25.54,42.51,25.76);
-  node["taxi"="yes"](42.34,25.54,42.51,25.76);
-  way["taxi"="yes"](42.34,25.54,42.51,25.76);
-  relation["taxi"="yes"](42.34,25.54,42.51,25.76);
+  // Taxi stands and taxi offices.
+  nwr["amenity"="taxi"](42.25,25.43,42.62,25.91);
+  nwr["office"="taxi"](42.25,25.43,42.62,25.91);
+  nwr["taxi"="yes"](42.25,25.43,42.62,25.91);
+  // Also find mapped taxi businesses whose name/brand says taxi/такси.
+  nwr["name"~"такси|taxi",i](42.25,25.43,42.62,25.91);
+  nwr["brand"~"такси|taxi",i](42.25,25.43,42.62,25.91);
+  nwr["operator"~"такси|taxi",i](42.25,25.43,42.62,25.91);
 );
 out center tags;
 `
 
 async function fetchTaxiStationsFromOverpass() {
     let lastError = "No Overpass endpoint responded"
-    const endpointErrors = []
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
@@ -1828,14 +1825,12 @@ async function fetchTaxiStationsFromOverpass() {
             }
             if (!response.ok) {
                 lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                endpointErrors.push(lastError)
                 console.warn("🚕 Taxi data:", lastError)
                 continue
             }
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
                 lastError = `Invalid Overpass response (${new URL(endpoint).host})`
-                endpointErrors.push(lastError)
                 continue
             }
             const seen = new Set()
@@ -1873,11 +1868,10 @@ async function fetchTaxiStationsFromOverpass() {
             lastError = e.name === "AbortError"
                 ? `Overpass request timed out (${new URL(endpoint).host})`
                 : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
-            endpointErrors.push(lastError)
             console.warn("🚕 Overpass endpoint failed:", endpoint, lastError)
         }
     }
-    throw new Error(endpointErrors.length ? endpointErrors.join("; ") : lastError)
+    throw new Error(lastError)
 }
 
 async function refreshTaxiStations() {
