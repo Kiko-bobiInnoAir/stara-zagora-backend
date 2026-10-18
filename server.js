@@ -1633,26 +1633,30 @@ const chargingStationsCache = {
 
 // Shared fallback list for both charging-station and taxi queries.
 const OVERPASS_ENDPOINTS = [
-    // Primary public instance, followed by independent fallbacks.
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter"
+]
+
+// Charging-only fallback list. Keep the taxi endpoint list and taxi code unchanged.
+const CHARGING_OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter"
 ]
 
+// Use one compact nwr query instead of three separate selectors to reduce server load.
 const CHARGING_QUERY = `
-[out:json][timeout:40];
-(
-  node["amenity"="charging_station"](42.34,25.54,42.51,25.76);
-  way["amenity"="charging_station"](42.34,25.54,42.51,25.76);
-  relation["amenity"="charging_station"](42.34,25.54,42.51,25.76);
-);
+[out:json][timeout:25];
+nwr["amenity"="charging_station"](42.34,25.54,42.51,25.76);
 out center tags;
 `
 
 async function fetchChargingStationsFromOverpass() {
-    const errors = []
+    let lastError = "No Overpass endpoint responded"
 
-    for (const endpoint of OVERPASS_ENDPOINTS) {
+    for (const endpoint of CHARGING_OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 45000)
@@ -1672,16 +1676,15 @@ async function fetchChargingStationsFromOverpass() {
             }
 
             if (!response.ok) {
-                const endpointError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                errors.push(endpointError)
-                console.warn("⚡ Charging stations:", endpointError)
+                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                console.warn("⚡ Charging stations:", lastError)
                 // A 429/502/503 is often temporary; try the next endpoint.
                 continue
             }
 
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
-                errors.push(`Invalid Overpass response (${new URL(endpoint).host})`)
+                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
                 continue
             }
 
@@ -1716,17 +1719,19 @@ async function fetchChargingStationsFromOverpass() {
                 })
             }
 
+            // Empty results can be legitimate, but record the endpoint and response for diagnosis.
+            console.log(`⚡ Charging query succeeded at ${new URL(endpoint).host}: ${stations.length} stations`)
             return stations
         } catch (e) {
-            const endpointError = e.name === "AbortError"
-                ? `Overpass request timed out (${new URL(endpoint).host})`
-                : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
-            errors.push(endpointError)
-            console.warn("⚡ Overpass endpoint failed:", endpoint, endpointError)
+            const host = new URL(endpoint).host
+            lastError = e.name === "AbortError"
+                ? `Overpass request timed out (${host})`
+                : `${e.cause?.code || e.name}: ${e.message} (${host})`
+            console.warn("⚡ Charging endpoint failed:", endpoint, lastError)
         }
     }
 
-    throw new Error(errors.join("; ") || "No Overpass endpoint responded")
+    throw new Error(lastError)
 }
 
 async function refreshChargingStations() {
@@ -1801,7 +1806,7 @@ out center tags;
 `
 
 async function fetchTaxiStationsFromOverpass() {
-    const errors = []
+    let lastError = "No Overpass endpoint responded"
     for (const endpoint of OVERPASS_ENDPOINTS) {
         try {
             const controller = new AbortController()
@@ -1821,14 +1826,13 @@ async function fetchTaxiStationsFromOverpass() {
                 clearTimeout(timeout)
             }
             if (!response.ok) {
-                const endpointError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
-                errors.push(endpointError)
-                console.warn("🚕 Taxi data:", endpointError)
+                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                console.warn("🚕 Taxi data:", lastError)
                 continue
             }
             const payload = await response.json()
             if (!Array.isArray(payload.elements)) {
-                errors.push(`Invalid Overpass response (${new URL(endpoint).host})`)
+                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
                 continue
             }
             const seen = new Set()
@@ -1863,14 +1867,13 @@ async function fetchTaxiStationsFromOverpass() {
             }
             return stations
         } catch (e) {
-            const endpointError = e.name === "AbortError"
+            lastError = e.name === "AbortError"
                 ? `Overpass request timed out (${new URL(endpoint).host})`
                 : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
-            errors.push(endpointError)
-            console.warn("🚕 Overpass endpoint failed:", endpoint, endpointError)
+            console.warn("🚕 Overpass endpoint failed:", endpoint, lastError)
         }
     }
-    throw new Error(errors.join("; ") || "No Overpass endpoint responded")
+    throw new Error(lastError)
 }
 
 async function refreshTaxiStations() {
