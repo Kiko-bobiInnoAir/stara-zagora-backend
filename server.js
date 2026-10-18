@@ -1765,6 +1765,141 @@ setInterval(refreshChargingStations, CHARGING_REFRESH_MS)
 // =======================
 
 
+
+// =======================
+// TAXI STANDS AND COMPANIES (OpenStreetMap)
+// =======================
+// Cached on this backend so Android clients do not query Overpass directly.
+const TAXI_REFRESH_MS = 12 * 60 * 60 * 1000 // 12 hours
+const taxiStationsCache = {
+    updatedAt: 0,
+    stations: [],
+    lastError: null,
+    refreshing: false
+}
+
+const TAXI_QUERY = `
+[out:json][timeout:40];
+(
+  node["amenity"="taxi"](42.34,25.54,42.51,25.76);
+  way["amenity"="taxi"](42.34,25.54,42.51,25.76);
+  relation["amenity"="taxi"](42.34,25.54,42.51,25.76);
+  node["office"="taxi"](42.34,25.54,42.51,25.76);
+  way["office"="taxi"](42.34,25.54,42.51,25.76);
+  relation["office"="taxi"](42.34,25.54,42.51,25.76);
+  node["taxi"="yes"](42.34,25.54,42.51,25.76);
+  way["taxi"="yes"](42.34,25.54,42.51,25.76);
+  relation["taxi"="yes"](42.34,25.54,42.51,25.76);
+);
+out center tags;
+`
+
+async function fetchTaxiStationsFromOverpass() {
+    let lastError = "No Overpass endpoint responded"
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 45000)
+            let response
+            try {
+                response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "User-Agent": "StaraZagoraSpeech/1.0 (taxi map)"
+                    },
+                    body: "data=" + encodeURIComponent(TAXI_QUERY),
+                    signal: controller.signal
+                })
+            } finally {
+                clearTimeout(timeout)
+            }
+            if (!response.ok) {
+                lastError = `Overpass HTTP ${response.status} (${new URL(endpoint).host})`
+                console.warn("🚕 Taxi data:", lastError)
+                continue
+            }
+            const payload = await response.json()
+            if (!Array.isArray(payload.elements)) {
+                lastError = `Invalid Overpass response (${new URL(endpoint).host})`
+                continue
+            }
+            const seen = new Set()
+            const stations = []
+            for (const item of payload.elements) {
+                const tags = item.tags || {}
+                const lat = Number(item.lat ?? item.center?.lat)
+                const lon = Number(item.lon ?? item.center?.lon)
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+                const id = `${item.type}/${item.id}`
+                if (seen.has(id)) continue
+                seen.add(id)
+                const street = String(tags["addr:street"] || "").trim()
+                const house = String(tags["addr:housenumber"] || "").trim()
+                const city = String(tags["addr:city"] || "Стара Загора").trim()
+                const address = [street, house, city].filter(Boolean).join(" ")
+                const name = String(tags.name || tags.brand || tags.operator ||
+                    (tags.amenity === "taxi" ? "Таксиметрова стоянка" : "Таксиметрова фирма")).trim()
+                stations.push({
+                    id,
+                    name,
+                    lat,
+                    lon,
+                    operator: String(tags.operator || tags.brand || "").trim(),
+                    address: address || String(tags["addr:full"] || "Адресът не е посочен в картата").trim(),
+                    phone: String(tags.phone || tags["contact:phone"] || tags["contact:mobile"] || "").trim(),
+                    website: String(tags.website || tags["contact:website"] || "").trim(),
+                    openingHours: String(tags.opening_hours || "").trim(),
+                    kind: (tags.amenity === "taxi" || tags.taxi === "yes") ? "Стоянка" : "Фирма",
+                    source: "OpenStreetMap"
+                })
+            }
+            return stations
+        } catch (e) {
+            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
+            console.warn("🚕 Overpass endpoint failed:", endpoint, lastError)
+        }
+    }
+    throw new Error(lastError)
+}
+
+async function refreshTaxiStations() {
+    if (taxiStationsCache.refreshing) return
+    taxiStationsCache.refreshing = true
+    try {
+        const stations = await fetchTaxiStationsFromOverpass()
+        taxiStationsCache.stations = stations
+        taxiStationsCache.updatedAt = Date.now()
+        taxiStationsCache.lastError = null
+        console.log(`🚕 Taxi objects updated: ${stations.length}`)
+    } catch (e) {
+        taxiStationsCache.lastError = e.message
+        console.warn("🚕 Taxi refresh failed; keeping previous cache:", e.message)
+    } finally {
+        taxiStationsCache.refreshing = false
+    }
+}
+
+app.get("/taxi-stations", (req, res) => {
+    res.set("Cache-Control", "public, max-age=60")
+    res.json({
+        updatedAt: taxiStationsCache.updatedAt,
+        nextUpdateAt: taxiStationsCache.updatedAt ? taxiStationsCache.updatedAt + TAXI_REFRESH_MS : 0,
+        stale: !taxiStationsCache.updatedAt || Date.now() - taxiStationsCache.updatedAt > TAXI_REFRESH_MS,
+        refreshing: taxiStationsCache.refreshing,
+        error: taxiStationsCache.lastError,
+        stations: taxiStationsCache.stations
+    })
+})
+
+refreshTaxiStations()
+setInterval(refreshTaxiStations, TAXI_REFRESH_MS)
+
+// =======================
+// END TAXI STANDS AND COMPANIES
+// =======================
+
+
 // =======================
 // START
 // =======================
