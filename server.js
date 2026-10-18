@@ -1631,9 +1631,13 @@ const chargingStationsCache = {
     refreshing: false
 }
 
+// Public Overpass instances. If one is down or rejects the query,
+// the next one is tried automatically. This does not affect the bus API.
 const OVERPASS_ENDPOINTS = [
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter"
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter"
 ]
 
 const CHARGING_QUERY = `
@@ -1714,7 +1718,9 @@ async function fetchChargingStationsFromOverpass() {
 
             return stations
         } catch (e) {
-            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
+            lastError = e.name === "AbortError"
+                ? `Overpass request timed out (${new URL(endpoint).host})`
+                : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
             console.warn("⚡ Overpass endpoint failed:", endpoint, lastError)
         }
     }
@@ -1856,7 +1862,9 @@ async function fetchTaxiStationsFromOverpass() {
             }
             return stations
         } catch (e) {
-            lastError = e.name === "AbortError" ? "Overpass request timed out" : e.message
+            lastError = e.name === "AbortError"
+                ? `Overpass request timed out (${new URL(endpoint).host})`
+                : `${e.cause?.code || e.name}: ${e.message} (${new URL(endpoint).host})`
             console.warn("🚕 Overpass endpoint failed:", endpoint, lastError)
         }
     }
